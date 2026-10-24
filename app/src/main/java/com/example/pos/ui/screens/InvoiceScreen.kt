@@ -27,6 +27,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -91,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.pos.data.Localization
+import com.example.pos.data.db.CustomerEntity
 import com.example.pos.data.db.ProductEntity
 import com.example.pos.domain.FinancialCalculationEngine
 import com.example.pos.ui.components.ItemTypeBadge
@@ -124,11 +130,10 @@ fun InvoiceScreen(
     val effectiveDraftPaidBdt by viewModel.effectiveDraftPaidBdt.collectAsState()
     val draftDueBdt by viewModel.draftDueBdt.collectAsState()
 
-    // Modals
-    var showProductPickerModal by remember { mutableStateOf(false) }
+    // Modals & Dialogs
     var showCustomItemDialog by remember { mutableStateOf(false) }
     var showClearDraftConfirmDialog by remember { mutableStateOf(false) }
-    var showCheckoutConfirmDialog by remember { mutableStateOf(false) }
+    var showDueDepositDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -149,465 +154,81 @@ fun InvoiceScreen(
             }
         )
 
-        LazyColumn(
+        // POS Terminal: Catalog and Cart on the Same Screen
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .weight(1f)
-                .padding(horizontal = 12.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp)
         ) {
-            // Customer Info & Order ID Row
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Text(
-                                    text = "#$draftOrderId",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                )
-                            }
-
-                            if (draftItems.isNotEmpty()) {
-                                TextButton(
-                                    onClick = { showClearDraftConfirmDialog = true },
-                                    modifier = Modifier.testTag("clear_draft_btn")
-                                ) {
-                                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = Localization.get(Localization.Key.CANCEL, language),
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                            value = customerInfo,
-                            onValueChange = { viewModel.setCustomerInfo(it) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("customer_info_input"),
-                            label = { Text(Localization.get(Localization.Key.CUSTOMER_INFO_LABEL, language), fontSize = 12.sp) },
-                            placeholder = { Text(Localization.get(Localization.Key.CUSTOMER_INFO_PLACEHOLDER, language), fontSize = 12.sp) },
-                            singleLine = true,
-                            isError = customerInfoError != null,
-                            supportingText = {
-                                if (customerInfoError != null) {
-                                    Text(
-                                        text = customerInfoError ?: "",
-                                        color = MaterialTheme.colorScheme.error,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            trailingIcon = {
-                                if (customerInfo.isNotBlank()) {
-                                    IconButton(onClick = { viewModel.setCustomerInfo("") }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(18.dp))
-                                    }
-                                }
-                            }
-                        )
-
-                        // Customer Auto-complete Suggestions (PRD: Efficient Search & Autocomplete)
-                        if (customerSuggestions.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (language == "bn") "পরামর্শ (ট্যাপ করুন):" else "Matches (tap to select):",
-                                style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                customerSuggestions.take(3).forEach { cust ->
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                                        modifier = Modifier
-                                            .clickable { viewModel.selectCustomerSuggestion(cust) }
-                                            .testTag("suggestion_${cust.customerInfo}")
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = cust.customerInfo,
-                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
-                                            )
-                                            if (cust.customerName.isNotBlank()) {
-                                                Text(
-                                                    text = " (${cust.customerName})",
-                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                                    maxLines = 1
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Quick Add Action Buttons Row
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { showProductPickerModal = true },
+            val isWideScreen = maxWidth >= 600.dp
+            if (isWideScreen) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    CatalogPane(
+                        products = allActiveProducts,
+                        language = language,
+                        onSelectProduct = { viewModel.addItemFromCatalog(it) },
+                        onOpenCustomDialog = { showCustomItemDialog = true },
                         modifier = Modifier
-                            .weight(1.2f)
-                            .testTag("add_product_btn"),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = Localization.get(Localization.Key.ADD_PRODUCT_OR_SERVICE, language),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { showCustomItemDialog = true },
+                            .weight(1f)
+                            .fillMaxHeight()
+                    )
+                    VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    CartPane(
+                        viewModel = viewModel,
+                        draftOrderId = draftOrderId,
+                        customerInfo = customerInfo,
+                        customerInfoError = customerInfoError,
+                        customerSuggestions = customerSuggestions,
+                        draftItems = draftItems,
+                        rawSubtotalPaisa = rawSubtotalPaisa,
+                        roundedTotalBdt = roundedTotalBdt,
+                        roundingDiffPaisa = roundingDiffPaisa,
+                        isProcessingOrder = isProcessingOrder,
+                        language = language,
+                        onOpenPaidCheckout = { viewModel.checkoutPaid(printDirectly = true) },
+                        onOpenDueCheckout = { showDueDepositDialog = true },
+                        onClearDraft = { showClearDraftConfirmDialog = true },
+                        context = context,
                         modifier = Modifier
-                            .weight(0.8f)
-                            .testTag("add_custom_btn"),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = Localization.get(Localization.Key.ADD_CUSTOM_ITEM, language),
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
-            }
-
-            // Invoice Table Header
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Spacer(modifier = Modifier.width(28.dp)) // space for reorder arrows
-                        Text(
-                            text = Localization.get(Localization.Key.TABLE_ITEM, language),
-                            modifier = Modifier.weight(1.3f),
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = Localization.get(Localization.Key.TABLE_QTY_UNIT, language),
-                            modifier = Modifier.weight(1f),
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = Localization.get(Localization.Key.TABLE_RATE, language),
-                            modifier = Modifier.weight(1f),
-                            textAlign = TextAlign.End,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = Localization.get(Localization.Key.TABLE_TOTAL, language),
-                            modifier = Modifier.weight(1f),
-                            textAlign = TextAlign.End,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(36.dp)) // space for delete action
-                    }
-                }
-            }
-
-            // Empty State
-            if (draftItems.isEmpty()) {
-                item {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 1.dp),
-                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp, horizontal = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Receipt,
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = Localization.get(Localization.Key.EMPTY_INVOICE_PROMPT, language),
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                            .weight(1.1f)
+                            .fillMaxHeight()
+                    )
                 }
             } else {
-                // Table Rows with In-Line Editing and Drag/Order Controls
-                itemsIndexed(draftItems, key = { _, item -> item.tempId }) { index, item ->
-                    InvoiceItemRow(
-                        item = item,
-                        index = index,
-                        totalItems = draftItems.size,
-                        onQuantityChanged = { newQty -> viewModel.updateItemQuantity(item.tempId, newQty) },
-                        onPriceChanged = { newPrice -> viewModel.updateItemUnitPrice(item.tempId, newPrice) },
-                        onMoveUp = { if (index > 0) viewModel.moveItem(index, index - 1) },
-                        onMoveDown = { if (index < draftItems.size - 1) viewModel.moveItem(index, index + 1) },
-                        onRemove = { viewModel.removeItem(item.tempId) }
+                Column(modifier = Modifier.fillMaxSize()) {
+                    CatalogPane(
+                        products = allActiveProducts,
+                        language = language,
+                        onSelectProduct = { viewModel.addItemFromCatalog(it) },
+                        onOpenCustomDialog = { showCustomItemDialog = true },
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .fillMaxWidth()
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    CartPane(
+                        viewModel = viewModel,
+                        draftOrderId = draftOrderId,
+                        customerInfo = customerInfo,
+                        customerInfoError = customerInfoError,
+                        customerSuggestions = customerSuggestions,
+                        draftItems = draftItems,
+                        rawSubtotalPaisa = rawSubtotalPaisa,
+                        roundedTotalBdt = roundedTotalBdt,
+                        roundingDiffPaisa = roundingDiffPaisa,
+                        isProcessingOrder = isProcessingOrder,
+                        language = language,
+                        onOpenPaidCheckout = { viewModel.checkoutPaid(printDirectly = true) },
+                        onOpenDueCheckout = { showDueDepositDialog = true },
+                        onClearDraft = { showClearDraftConfirmDialog = true },
+                        context = context,
+                        modifier = Modifier
+                            .weight(1.05f)
+                            .fillMaxWidth()
                     )
                 }
             }
-
-            // Calculations & Auto-Rounding Box
-            if (draftItems.isNotEmpty()) {
-                item {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("invoice_summary_card"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            // Subtotal Row
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = Localization.get(Localization.Key.SUBTOTAL, language),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${FinancialCalculationEngine.formatPaisaToBdt(rawSubtotalPaisa)} ৳",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            // Auto-Rounding Rule Explanation Badge
-                            val roundingSign = if (roundingDiffPaisa > 0) "+" else ""
-                            val roundingText = "${roundingSign}${FinancialCalculationEngine.formatPaisaToBdt(roundingDiffPaisa)} ৳"
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = Localization.get(Localization.Key.ROUNDING_ADJUSTMENT, language),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = if (roundingDiffPaisa == 0L) Color(0xFFEEEEEE)
-                                        else if (roundingDiffPaisa < 0) Color(0xFFFFEBEE)
-                                        else Color(0xFFE8F5E9)
-                                    ) {
-                                        Text(
-                                            text = if (roundingDiffPaisa < 0) "(.01-.50 ↓)" else if (roundingDiffPaisa > 0) "(.51-.99 ↑)" else "(.00 =)",
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                            color = if (roundingDiffPaisa < 0) Color(0xFFC62828) else if (roundingDiffPaisa > 0) Color(0xFF2E7D32) else Color.Gray
-                                        )
-                                    }
-                                }
-
-                                Text(
-                                    text = roundingText,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (roundingDiffPaisa < 0) Color(0xFFD32F2F) else if (roundingDiffPaisa > 0) Color(0xFF388E3C) else MaterialTheme.colorScheme.onSurface
-                                    )
-                                )
-                            }
-
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 10.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant
-                            )
-
-                            // Final Rounded Payable Total (BDT)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = Localization.get(Localization.Key.ROUNDED_TOTAL, language),
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = "Final Payable Amount in BDT",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(roundedTotalBdt)} ৳",
-                                    style = MaterialTheme.typography.headlineSmall.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Action Checkout / Print / PDF Buttons
-                item {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { showCheckoutConfirmDialog = true },
-                            enabled = !isProcessingOrder && draftItems.isNotEmpty(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .testTag("checkout_print_btn"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        ) {
-                            if (isProcessingOrder) {
-                                CircularProgressIndicator(
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (language == "bn") "সংরক্ষণ হচ্ছে..." else "Saving...",
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                )
-                            } else {
-                                Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = Localization.get(Localization.Key.BTN_CHECKOUT_PRINT, language),
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                )
-                            }
-                        }
-
-                        OutlinedButton(
-                            onClick = { viewModel.openReceiptPreview() },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .testTag("preview_receipt_btn"),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.Receipt, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = Localization.get(Localization.Key.BTN_PREVIEW_RECEIPT, language),
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = { viewModel.generateAndShareCurrentDraftPdf(context) },
-                            enabled = draftItems.isNotEmpty(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .testTag("draft_share_pdf_btn"),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.PictureAsPdf,
-                                contentDescription = "Share PDF",
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = Localization.get(Localization.Key.BTN_DRAFT_PDF, language),
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                        }
-                    }
-                }
-            }
         }
-    }
-
-    // Modal Sheet: Product Selection from Master Catalog
-    if (showProductPickerModal) {
-        ProductPickerBottomSheet(
-            products = allActiveProducts,
-            language = language,
-            onDismiss = { showProductPickerModal = false },
-            onSelect = { product ->
-                viewModel.addItemFromCatalog(product)
-                showProductPickerModal = false
-            }
-        )
     }
 
     // Dialog: Custom Non-Catalog Item
@@ -658,203 +279,780 @@ fun InvoiceScreen(
         )
     }
 
-    // Confirmation Modal: "Full Paid" Confirmation & Invoice Print Feature (PHASE 4 & PHASE 6)
-    if (showCheckoutConfirmDialog) {
-        Dialog(onDismissRequest = { showCheckoutConfirmDialog = false }) {
-            Card(
+    // Due Payment Deposit Dialog (Option A: Numeric Whole BDT, default 0, input validation)
+    if (showDueDepositDialog) {
+        DueDepositDialog(
+            roundedTotalBdt = roundedTotalBdt,
+            language = language,
+            onDismiss = { showDueDepositDialog = false },
+            onSubmit = { depositBdt ->
+                showDueDepositDialog = false
+                viewModel.checkoutDue(depositBdt, printDirectly = true)
+            }
+        )
+    }
+}
+
+@Composable
+fun CatalogPane(
+    products: List<ProductEntity>,
+    language: String,
+    onSelectProduct: (ProductEntity) -> Unit,
+    onOpenCustomDialog: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf("ALL") }
+
+    val filteredProducts = remember(products, searchQuery, selectedFilter) {
+        products.filter { p ->
+            val matchesFilter = when (selectedFilter) {
+                "LIQUID" -> p.itemType.equals("Liquid", ignoreCase = true)
+                "PRODUCT" -> p.itemType.equals("Product", ignoreCase = true)
+                "SERVICE" -> p.itemType.equals("Service", ignoreCase = true)
+                else -> true
+            }
+            val matchesSearch = searchQuery.isBlank() ||
+                    p.itemName.contains(searchQuery, ignoreCase = true) ||
+                    p.nameBn.contains(searchQuery, ignoreCase = true) ||
+                    p.nameEn.contains(searchQuery, ignoreCase = true)
+            matchesFilter && matchesSearch
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .testTag("catalog_pane")
+    ) {
+        // Search bar + Custom item button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp)
-                    .testTag("checkout_confirm_dialog"),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (isDraftFullPaid) {
-                        // Green Check / Tick Icon
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFFE8F5E9),
-                            modifier = Modifier.size(72.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = "Full Paid",
-                                    tint = Color(0xFF2E7D32),
-                                    modifier = Modifier.size(50.dp)
-                                )
-                            }
+                    .weight(1f)
+                    .height(50.dp)
+                    .testTag("catalog_search_input"),
+                placeholder = {
+                    Text(
+                        text = Localization.get(Localization.Key.SEARCH_PRODUCTS, language),
+                        fontSize = 12.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
                         }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Text(
-                            text = "Full Paid",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                            color = Color(0xFF2E7D32)
-                        )
-                        Text(
-                            text = if (language == "bn") "✓ সম্পূর্ণ পরিশোধিত ইনভয়েস" else "✓ Fully Paid Invoice",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = Color(0xFF2E7D32)
-                        )
-                    } else {
-                        // When NOT fully paid
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
-                            modifier = Modifier.size(72.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = "Payment Status",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(46.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Text(
-                            text = if (language == "bn") "বাকি / অপরিশোধিত" else "Due / Partial Payment",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.error
-                        )
                     }
+                },
+                shape = RoundedCornerShape(8.dp),
+                singleLine = true
+            )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onOpenCustomDialog,
+                modifier = Modifier
+                    .height(50.dp)
+                    .testTag("add_custom_btn"),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(
+                    text = if (language == "bn") "কাস্টম" else "Custom",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                )
+            }
+        }
 
-                    // Summary Details Card
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Category Filter Chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            FilterChip(
+                selected = selectedFilter == "ALL",
+                onClick = { selectedFilter = "ALL" },
+                label = { Text(Localization.get(Localization.Key.FILTER_ALL, language), fontSize = 10.sp) }
+            )
+            FilterChip(
+                selected = selectedFilter == "LIQUID",
+                onClick = { selectedFilter = "LIQUID" },
+                label = { Text(Localization.get(Localization.Key.FILTER_LIQUID, language), fontSize = 10.sp) }
+            )
+            FilterChip(
+                selected = selectedFilter == "PRODUCT",
+                onClick = { selectedFilter = "PRODUCT" },
+                label = { Text(Localization.get(Localization.Key.FILTER_PRODUCT, language), fontSize = 10.sp) }
+            )
+            FilterChip(
+                selected = selectedFilter == "SERVICE",
+                onClick = { selectedFilter = "SERVICE" },
+                label = { Text(Localization.get(Localization.Key.FILTER_SERVICE, language), fontSize = 10.sp) }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Catalog Product Cards in a responsive Grid
+        if (filteredProducts.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (language == "bn") "কোনো পণ্য পাওয়া যায়নি" else "No products found",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 130.dp),
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(bottom = 6.dp)
+            ) {
+                items(filteredProducts, key = { it.itemId }) { product ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectProduct(product) }
+                            .testTag("catalog_item_${product.itemId}"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .padding(8.dp)
                         ) {
+                            Text(
+                                text = product.getDisplayName(language),
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    ItemTypeBadge(product.itemType)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = product.unit,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 Text(
-                                    text = if (language == "bn") "ইনভয়েস নং:" else "Invoice ID:",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "${FinancialCalculationEngine.formatPaisaToBdt(product.defaultUnitPricePaisa)} ৳",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CartPane(
+    viewModel: PosViewModel,
+    draftOrderId: String,
+    customerInfo: String,
+    customerInfoError: String?,
+    customerSuggestions: List<CustomerEntity>,
+    draftItems: List<DraftInvoiceItem>,
+    rawSubtotalPaisa: Long,
+    roundedTotalBdt: Long,
+    roundingDiffPaisa: Long,
+    isProcessingOrder: Boolean,
+    language: String,
+    onOpenPaidCheckout: () -> Unit,
+    onOpenDueCheckout: () -> Unit,
+    onClearDraft: () -> Unit,
+    context: android.content.Context,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp)
+            .testTag("cart_pane")
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp)
+        ) {
+            // Customer Info & Order ID Row
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
                                 Text(
                                     text = "#$draftOrderId",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = Localization.get(Localization.Key.ROUNDED_TOTAL, language) + ":",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(roundedTotalBdt)} ৳",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = if (language == "bn") "পরিশোধিত টাকা:" else "Paid Amount:",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(effectiveDraftPaidBdt)} ৳",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelMedium.copy(
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isDraftFullPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 )
                             }
 
-                            if (!isDraftFullPaid && draftDueBdt > 0) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { viewModel.openReceiptPreview() },
+                                    enabled = draftItems.isNotEmpty(),
+                                    modifier = Modifier.size(28.dp).testTag("preview_receipt_btn")
                                 ) {
-                                    Text(
-                                        text = if (language == "bn") "বাকি টাকা:" else "Due Amount:",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                    Text(
-                                        text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(draftDueBdt)} ৳",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.error
+                                    Icon(Icons.Default.Receipt, contentDescription = "Preview", modifier = Modifier.size(16.dp))
+                                }
+                                IconButton(
+                                    onClick = { viewModel.generateAndShareCurrentDraftPdf(context) },
+                                    enabled = draftItems.isNotEmpty(),
+                                    modifier = Modifier.size(28.dp).testTag("draft_share_pdf_btn")
+                                ) {
+                                    Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                                if (draftItems.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = onClearDraft,
+                                        modifier = Modifier.size(28.dp).testTag("clear_draft_btn")
+                                    ) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Discard", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        OutlinedTextField(
+                            value = customerInfo,
+                            onValueChange = { viewModel.setCustomerInfo(it) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("customer_info_input"),
+                            label = { Text(Localization.get(Localization.Key.CUSTOMER_INFO_LABEL, language), fontSize = 11.sp) },
+                            placeholder = { Text(Localization.get(Localization.Key.CUSTOMER_INFO_PLACEHOLDER, language), fontSize = 11.sp) },
+                            singleLine = true,
+                            isError = customerInfoError != null,
+                            shape = RoundedCornerShape(6.dp),
+                            trailingIcon = {
+                                if (customerInfo.isNotBlank()) {
+                                    IconButton(onClick = { viewModel.setCustomerInfo("") }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        )
+
+                        if (customerSuggestions.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                customerSuggestions.take(3).forEach { cust ->
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                        modifier = Modifier
+                                            .clickable { viewModel.selectCustomerSuggestion(cust) }
+                                            .testTag("suggestion_${cust.customerInfo}")
+                                    ) {
+                                        Text(
+                                            text = cust.customerInfo,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                         )
-                                    )
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
 
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Action Buttons (Vertical Layout)
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+            // Table Header
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                showCheckoutConfirmDialog = false
-                                viewModel.checkoutAndSave(printDirectly = true)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("confirm_print_btn"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        ) {
-                            Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (language == "bn") "প্রিন্ট ও নিশ্চিতকরণ" else "Print & Confirm",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(28.dp))
+                        Text(
+                            text = Localization.get(Localization.Key.TABLE_ITEM, language),
+                            modifier = Modifier.weight(1.3f),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = Localization.get(Localization.Key.TABLE_QTY_UNIT, language),
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = Localization.get(Localization.Key.TABLE_RATE, language),
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = Localization.get(Localization.Key.TABLE_TOTAL, language),
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.width(36.dp))
+                    }
+                }
+            }
 
-                        OutlinedButton(
-                            onClick = { showCheckoutConfirmDialog = false },
+            // Empty State
+            if (draftItems.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 1.dp),
+                        shape = RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("cancel_confirm_btn"),
-                            shape = RoundedCornerShape(10.dp)
+                                .padding(vertical = 20.dp, horizontal = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
+                            Icon(
+                                imageVector = Icons.Default.Receipt,
+                                contentDescription = null,
+                                modifier = Modifier.size(36.dp),
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = Localization.get(Localization.Key.CANCEL, language),
-                                style = MaterialTheme.typography.titleSmall
+                                text = Localization.get(Localization.Key.EMPTY_INVOICE_PROMPT, language),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+            } else {
+                itemsIndexed(draftItems, key = { _, item -> item.tempId }) { index, item ->
+                    InvoiceItemRow(
+                        item = item,
+                        index = index,
+                        totalItems = draftItems.size,
+                        onQuantityChanged = { newQty -> viewModel.updateItemQuantity(item.tempId, newQty) },
+                        onPriceChanged = { newPrice -> viewModel.updateItemUnitPrice(item.tempId, newPrice) },
+                        onMoveUp = { if (index > 0) viewModel.moveItem(index, index - 1) },
+                        onMoveDown = { if (index < draftItems.size - 1) viewModel.moveItem(index, index + 1) },
+                        onRemove = { viewModel.removeItem(item.tempId) }
+                    )
+                }
+            }
+
+            // Summary Card
+            if (draftItems.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("invoice_summary_card"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = Localization.get(Localization.Key.SUBTOTAL, language),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${FinancialCalculationEngine.formatPaisaToBdt(rawSubtotalPaisa)} ৳",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                            }
+
+                            val roundingSign = if (roundingDiffPaisa > 0) "+" else ""
+                            val roundingText = "${roundingSign}${FinancialCalculationEngine.formatPaisaToBdt(roundingDiffPaisa)} ৳"
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = Localization.get(Localization.Key.ROUNDING_ADJUSTMENT, language),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = roundingText,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium)
+                                )
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = Localization.get(Localization.Key.ROUNDED_TOTAL, language),
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(roundedTotalBdt)} ৳",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pinned Bottom Checkout Bar: Blue Paid & Red Due Actions
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp
+        ) {
+            if (isProcessingOrder) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = if (language == "bn") "সংরক্ষণ ও প্রিন্ট হচ্ছে..." else "Processing & printing...",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Blue Paid Button
+                    Button(
+                        onClick = onOpenPaidCheckout,
+                        enabled = !isProcessingOrder && draftItems.isNotEmpty(),
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .height(52.dp)
+                            .testTag("checkout_paid_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1976D2),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (language == "bn") "পরিশোধ (${roundedTotalBdt} ৳)" else "Paid (${roundedTotalBdt} ৳)",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Red Due Button
+                    Button(
+                        onClick = onOpenDueCheckout,
+                        enabled = !isProcessingOrder && draftItems.isNotEmpty(),
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .height(52.dp)
+                            .testTag("checkout_due_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFD32F2F),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Default.Receipt, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (language == "bn") "বাকি (Due)" else "Due",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DueDepositDialog(
+    roundedTotalBdt: Long,
+    language: String,
+    onDismiss: () -> Unit,
+    onSubmit: (depositBdt: Long) -> Unit
+) {
+    val isBn = language == "bn"
+    var depositInput by remember { mutableStateOf("0") }
+
+    val trimmed = depositInput.trim()
+    val hasDecimal = trimmed.contains(".") || trimmed.contains(",")
+    val parsedValue = trimmed.toLongOrNull()
+
+    val validationError: String? = when {
+        hasDecimal -> if (isBn) "দশমিক গ্রহণযোগ্য নয়, পূর্ণ টাকা লিখুন" else "Decimals not allowed, enter whole BDT"
+        trimmed.isEmpty() -> if (isBn) "জমা টাকার পরিমাণ লিখুন" else "Please enter deposit amount"
+        parsedValue == null -> if (isBn) "সঠিক পূর্ণ সংখ্যা লিখুন" else "Enter a valid integer amount"
+        parsedValue < 0L -> if (isBn) "জমা টাকা ঋণাত্মক হতে পারে না" else "Deposit cannot be negative"
+        parsedValue > roundedTotalBdt -> if (isBn) "জমা টাকা মোট টাকার (${roundedTotalBdt} ৳) বেশি হতে পারে না" else "Deposit cannot exceed total (${roundedTotalBdt} ৳)"
+        else -> null
+    }
+
+    val depositBdt = if (validationError == null && parsedValue != null) parsedValue else 0L
+    val dueAmountBdt = maxOf(0L, roundedTotalBdt - depositBdt)
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .widthIn(max = 440.dp)
+                .testTag("due_deposit_dialog"),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isBn) "জমা টাকা (৳)" else "Deposit Amount (৳)",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFFD32F2F)
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Payable Total Information Box
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isBn) "মোট প্রদেয় বিল:" else "Payable Total:",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(roundedTotalBdt)} ৳",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Numeric input field
+                OutlinedTextField(
+                    value = depositInput,
+                    onValueChange = { incoming ->
+                        depositInput = incoming.filter { it.isDigit() || it == '.' || it == '-' || it == ',' }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("due_deposit_input"),
+                    label = { Text(if (isBn) "জমা টাকা (৳)" else "Deposit (৳)") },
+                    placeholder = { Text("0") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = validationError != null,
+                    supportingText = {
+                        if (validationError != null) {
+                            Text(
+                                text = validationError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 11.sp
+                            )
+                        } else {
+                            Text(
+                                text = if (depositBdt == roundedTotalBdt) (if (isBn) "✓ সম্পূর্ণ পরিশোধিত হবে" else "✓ Fully paid") else (if (isBn) "ডিফল্ট ০ টাকা" else "Default 0 BDT"),
+                                fontSize = 11.sp,
+                                color = if (depositBdt == roundedTotalBdt) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Real-time Calculated Remaining Due Display
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (dueAmountBdt > 0L) Color(0xFFFFEBEE) else Color(0xFFE8F5E9)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isBn) "অবশিষ্ট বাকি (Due):" else "Remaining Due:",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (dueAmountBdt > 0L) Color(0xFFC62828) else Color(0xFF2E7D32)
+                        )
+                        Text(
+                            text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(dueAmountBdt)} ৳",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (dueAmountBdt > 0L) Color(0xFFC62828) else Color(0xFF2E7D32)
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Actions: Save & Print, Cancel
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(Localization.get(Localization.Key.CANCEL, language))
+                    }
+
+                    Button(
+                        onClick = {
+                            if (validationError == null) {
+                                onSubmit(depositBdt)
+                            }
+                        },
+                        enabled = validationError == null && trimmed.isNotEmpty(),
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(48.dp)
+                            .testTag("confirm_due_checkout_btn"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                    ) {
+                        Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isBn) "সংরক্ষণ ও প্রিন্ট" else "Save & Print",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

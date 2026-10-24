@@ -459,6 +459,57 @@ class ThermalPrinterLayoutTest {
         assertTrue("ESC/POS receipt must rasterize FULL PAID check mark using GS v 0", escPos.toList().containsSubsequence(gsV0))
     }
 
+    @Test
+    fun testReceiptPartialPaymentBreakdown_58mmAnd80mm() {
+        val header = createSampleHeader()
+        val dueInvoice = createSampleInvoice().copy(
+            isPaid = false,
+            paidAmountBdt = 100L,
+            roundedTotalBdt = 186L
+        )
+        val lines = createSampleLines()
+
+        val text58 = ThermalReceiptFormatter.generateReceiptText(
+            header = header,
+            invoice = dueInvoice,
+            lines = lines,
+            paperSize = "58mm",
+            footerLine1 = "Thank you",
+            footerLine2 = "Visit Again",
+            isFullPaid = false,
+            lang = "bn"
+        )
+
+        assertTrue("58mm receipt must contain 'জমা (Paid):'", text58.contains("জমা (Paid):"))
+        assertTrue("58mm receipt must contain paid amount 100", text58.contains("100 ৳"))
+        assertTrue("58mm receipt must contain 'বাকি (Due):'", text58.contains("বাকি (Due):"))
+        assertTrue("58mm receipt must contain remaining due 86", text58.contains("86 ৳"))
+        assertFalse("Partial paid receipt must NOT contain FULL PAID check", text58.contains("FULL PAID ✓"))
+        assertFalse("Partial paid receipt must NOT contain সম্পূর্ণ পরিশোধিত check", text58.contains("সম্পূর্ণ পরিশোধিত ✓"))
+
+        // Check line width limit on 58mm
+        text58.lines().forEach { line ->
+            val vWidth = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("Line '$line' width $vWidth exceeds 32 chars on 58mm", vWidth <= 32)
+        }
+
+        val text80 = ThermalReceiptFormatter.generateReceiptText(
+            header = header,
+            invoice = dueInvoice,
+            lines = lines,
+            paperSize = "80mm",
+            footerLine1 = "Thank you",
+            footerLine2 = "Visit Again",
+            isFullPaid = false,
+            lang = "bn"
+        )
+
+        assertTrue("80mm receipt must contain 'জমা (Paid):'", text80.contains("জমা (Paid):"))
+        assertTrue("80mm receipt must contain '100 ৳'", text80.contains("100 ৳"))
+        assertTrue("80mm receipt must contain 'বাকি (Due):'", text80.contains("বাকি (Due):"))
+        assertTrue("80mm receipt must contain '86 ৳'", text80.contains("86 ৳"))
+    }
+
     private fun List<Byte>.containsSubsequence(sub: ByteArray): Boolean {
         for (i in 0..this.size - sub.size) {
             var match = true

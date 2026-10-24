@@ -106,7 +106,8 @@ data class ProductEntity(
         Index(value = ["operator_id"]),
         Index(value = ["customer_info"]),
         Index(value = ["rounded_total_bdt"]),
-        Index(value = ["raw_total_paisa"])
+        Index(value = ["raw_total_paisa"]),
+        Index(value = ["is_paid"])
     ]
 )
 data class InvoiceEntity(
@@ -120,6 +121,8 @@ data class InvoiceEntity(
     @ColumnInfo(name = "customer_info") val customerInfo: String,
     @ColumnInfo(name = "raw_total_paisa") val rawTotalPaisa: Long,
     @ColumnInfo(name = "rounded_total_bdt") val roundedTotalBdt: Long,
+    @ColumnInfo(name = "is_paid", defaultValue = "1") val isPaid: Boolean = true,
+    @ColumnInfo(name = "paid_amount_bdt", defaultValue = "0") val paidAmountBdt: Long = 0L,
     @ColumnInfo(name = "footer_note") val footerNote: String = "",
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()

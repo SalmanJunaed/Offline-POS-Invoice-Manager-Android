@@ -14,6 +14,7 @@ import com.example.pos.data.db.CustomerEntity
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.OperatorEntity
+import com.example.pos.data.db.PaymentRecordEntity
 import com.example.pos.data.db.ProductEntity
 import com.example.pos.data.db.ItemSalesSummary
 import com.example.pos.data.repository.HistorySortOption
@@ -617,7 +618,30 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         _receiptPreviewOpen.value = false
     }
 
-    fun checkoutAndSave(printDirectly: Boolean = true) {
+    fun checkoutPaid(printDirectly: Boolean = true) {
+        val total = roundedTotalBdt.value
+        checkoutOrder(isPaid = true, paidAmountBdt = total, printDirectly = printDirectly)
+    }
+
+    fun checkoutDue(depositBdt: Long, printDirectly: Boolean = true) {
+        val total = roundedTotalBdt.value
+        val validDeposit = depositBdt.coerceIn(0L, total)
+        val isPaid = (validDeposit == total)
+        checkoutOrder(isPaid = isPaid, paidAmountBdt = validDeposit, printDirectly = printDirectly)
+    }
+
+    fun checkoutAndSave(isPaid: Boolean = true, paidAmountBdt: Long? = null, printDirectly: Boolean = true) {
+        val total = roundedTotalBdt.value
+        val actualPaid = paidAmountBdt ?: if (isPaid) total else 0L
+        val effectiveIsPaid = (actualPaid == total)
+        checkoutOrder(isPaid = effectiveIsPaid, paidAmountBdt = actualPaid, printDirectly = printDirectly)
+    }
+
+    private fun checkoutOrder(
+        isPaid: Boolean,
+        paidAmountBdt: Long,
+        printDirectly: Boolean
+    ) {
         if (_draftItems.value.isEmpty()) {
             _toastMessage.value = Localization.get(Localization.Key.EMPTY_INVOICE_PROMPT, _language.value)
             return
@@ -655,6 +679,9 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 val rawTotal = FinancialCalculationEngine.calculateRawTotal(lines.map { it.lineTotalPaisa })
                 val roundedTotal = FinancialCalculationEngine.calculateRoundedTotalBdt(rawTotal)
 
+                val validatedPaidAmountBdt = paidAmountBdt.coerceIn(0L, roundedTotal)
+                val finalIsPaid = (validatedPaidAmountBdt == roundedTotal)
+
                 val invoice = InvoiceEntity(
                     orderId = orderId,
                     globalTransactionId = globalId,
@@ -665,16 +692,28 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     customerInfo = _customerInfo.value.ifBlank { "01700000000" },
                     rawTotalPaisa = rawTotal,
                     roundedTotalBdt = roundedTotal,
+                    isPaid = finalIsPaid,
+                    paidAmountBdt = validatedPaidAmountBdt,
                     footerNote = "${settings?.footerNoteLine1}\n${settings?.footerNoteLine2}",
                     createdAt = now,
                     updatedAt = now
                 )
 
-                repository.saveOrder(invoice, lines)
+                val payment = if (validatedPaidAmountBdt > 0L) {
+                    PaymentRecordEntity(
+                        orderId = orderId,
+                        paymentMethod = "CASH",
+                        amountPaidPaisa = validatedPaidAmountBdt * 100L,
+                        transactionRef = null,
+                        timestamp = now,
+                        createdAt = now
+                    )
+                } else null
+
+                repository.saveOrder(invoice, lines, payment)
                 val customerToRecord = _customerInfo.value.trim().ifBlank { "01700000000" }
                 repository.recordCustomerOrder(customerToRecord, rawSubtotalPaisa.value)
 
-                val isPaid = isDraftFullPaid.value
                 val paperSize = settings?.paperSize ?: "58mm"
                 val autoCutter = settings?.autoCutterEnabled ?: true
                 val receiptText = ThermalReceiptFormatter.generateReceiptText(
@@ -684,7 +723,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     paperSize = paperSize,
                     footerLine1 = settings?.footerNoteLine1 ?: "",
                     footerLine2 = settings?.footerNoteLine2 ?: "",
-                    isFullPaid = isPaid,
+                    isFullPaid = finalIsPaid,
                     lang = _language.value
                 )
 
@@ -703,7 +742,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                         footerLine1 = settings?.footerNoteLine1 ?: "",
                         footerLine2 = settings?.footerNoteLine2 ?: "",
                         logoBitmap = logoBitmap,
-                        isFullPaid = isPaid,
+                        isFullPaid = finalIsPaid,
                         lang = _language.value
                     )
                     val printResult = BluetoothPrinterManager.print(
@@ -722,7 +761,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 _receiptPreviewText.value = receiptText
-                _receiptPreviewOpen.value = true
+                // Normal checkout directly returns to terminal without showing receipt preview modal
 
                 // Clear draft and generate new order ID
                 _draftItems.value = emptyList()

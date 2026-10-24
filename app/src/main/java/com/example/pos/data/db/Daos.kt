@@ -546,6 +546,27 @@ interface InvoiceDao {
         insertInvoiceLines(lines)
     }
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPayment(payment: PaymentRecordEntity)
+
+    @Query("UPDATE app_settings SET next_order_sequence = next_order_sequence + 1 WHERE id = 1")
+    suspend fun incrementOrderSequence()
+
+    @Transaction
+    suspend fun saveFullOrderAtomic(
+        invoice: InvoiceEntity,
+        lines: List<InvoiceLineEntity>,
+        payment: PaymentRecordEntity?
+    ) {
+        insertInvoice(invoice)
+        deleteLinesForOrder(invoice.orderId)
+        insertInvoiceLines(lines)
+        if (payment != null) {
+            insertPayment(payment)
+        }
+        incrementOrderSequence()
+    }
+
     @Transaction
     suspend fun deleteFullOrder(orderId: String) {
         deleteLinesForOrder(orderId)

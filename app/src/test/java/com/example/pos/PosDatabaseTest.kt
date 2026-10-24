@@ -319,6 +319,12 @@ class PosDatabaseTest {
                             db.execSQL(
                                 "INSERT INTO products VALUES ('prod-v1', 'Octane Old', 'Liquid', 'L', 13000, 1, 1, 1000, 1000)"
                             )
+                            db.execSQL(
+                                "INSERT INTO invoices VALUES ('INV-HIST-01', 1700000000000, 'OP-1', 'Operator Kabir', '01711223344', 254050, 2541, 'Old Note', 1700000000000, 1700000000000)"
+                            )
+                            db.execSQL(
+                                "INSERT INTO invoices VALUES ('INV-HIST-02', 1700000050000, 'OP-1', 'Operator Kabir', '01799887766', 150000, 1500, 'Old Note 2', 1700000050000, 1700000050000)"
+                            )
                         }
 
                         override fun onUpgrade(
@@ -332,14 +338,15 @@ class PosDatabaseTest {
         val v1Db = helper.writableDatabase
         v1Db.close()
 
-        // Now open with Room and apply MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, and MIGRATION_5_6
+        // Now open with Room and apply MIGRATION_1_2 through MIGRATION_6_7
         val migratedDb = Room.databaseBuilder(context, PosDatabase::class.java, "migration_test.db")
             .addMigrations(
                 PosDatabase.MIGRATION_1_2,
                 PosDatabase.MIGRATION_2_3,
                 PosDatabase.MIGRATION_3_4,
                 PosDatabase.MIGRATION_4_5,
-                PosDatabase.MIGRATION_5_6
+                PosDatabase.MIGRATION_5_6,
+                PosDatabase.MIGRATION_6_7
             )
             .allowMainThreadQueries()
             .build()
@@ -397,6 +404,66 @@ class PosDatabaseTest {
             assertEquals("Diesel", fetchedNew?.nameEn)
             assertEquals("ডিজেল", fetchedNew?.getDisplayName("bn"))
             assertEquals("Diesel", fetchedNew?.getDisplayName("en"))
+
+            // Verify invoice entity with v7 columns works in migrated DB
+            val v7Invoice = InvoiceEntity(
+                orderId = "INV-V7-001",
+                dateTime = 5000L,
+                operatorId = "OP-1",
+                operatorName = "Tester",
+                customerInfo = "01700000000",
+                rawTotalPaisa = 10000L,
+                roundedTotalBdt = 100L,
+                isPaid = true,
+                paidAmountBdt = 100L
+            )
+            migratedDb.invoiceDao().insertInvoice(v7Invoice)
+            // Verify historical invoices have is_paid = true and paid_amount_bdt = rounded_total_bdt after MIGRATION_6_7
+            val hist1 = migratedDb.invoiceDao().getInvoiceById("INV-HIST-01")
+            assertNotNull(hist1)
+            assertTrue("Historical invoice must be migrated as isPaid = true", hist1!!.isPaid)
+            assertEquals("Historical invoice paidAmountBdt must equal roundedTotalBdt", 2541L, hist1.paidAmountBdt)
+            assertEquals(2541L, hist1.roundedTotalBdt)
+
+            val hist2 = migratedDb.invoiceDao().getInvoiceById("INV-HIST-02")
+            assertNotNull(hist2)
+            assertTrue("Historical invoice must be migrated as isPaid = true", hist2!!.isPaid)
+            assertEquals("Historical invoice paidAmountBdt must equal roundedTotalBdt", 1500L, hist2.paidAmountBdt)
+            assertEquals(1500L, hist2.roundedTotalBdt)
+
+            // Verify payment_records has NOT had fake records fabricated
+            val paymentsHist1 = migratedDb.paymentDao().getPaymentsForOrder("INV-HIST-01").first()
+            assertTrue("No fabricated payment records should exist for historical invoices", paymentsHist1.isEmpty())
+
+            // Test atomic saving of a new invoice with partial payment in migrated DB
+            val newInvoice = InvoiceEntity(
+                orderId = "INV-V7-NEW",
+                dateTime = 6000L,
+                operatorId = "OP-1",
+                operatorName = "Tester",
+                customerInfo = "01800000000",
+                rawTotalPaisa = 100000L,
+                roundedTotalBdt = 1000L,
+                isPaid = false,
+                paidAmountBdt = 400L
+            )
+            val newPayment = PaymentRecordEntity(
+                orderId = "INV-V7-NEW",
+                paymentMethod = "CASH",
+                amountPaidPaisa = 40000L
+            )
+            migratedDb.invoiceDao().saveFullOrderAtomic(newInvoice, emptyList(), newPayment)
+
+            val savedNew = migratedDb.invoiceDao().getInvoiceById("INV-V7-NEW")
+            assertNotNull(savedNew)
+            assertEquals(false, savedNew!!.isPaid)
+            assertEquals(400L, savedNew.paidAmountBdt)
+            assertEquals(1000L, savedNew.roundedTotalBdt)
+
+            val savedPayments = migratedDb.paymentDao().getPaymentsForOrder("INV-V7-NEW").first()
+            assertEquals(1, savedPayments.size)
+            assertEquals("CASH", savedPayments[0].paymentMethod)
+            assertEquals(40000L, savedPayments[0].amountPaidPaisa)
         }
 
         migratedDb.close()

@@ -21,7 +21,7 @@ import java.security.MessageDigest
         PaymentRecordEntity::class,
         CustomerEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class PosDatabase : RoomDatabase() {
@@ -47,9 +47,9 @@ abstract class PosDatabase : RoomDatabase() {
                 // invoices
                 db.execSQL("ALTER TABLE invoices ADD COLUMN global_transaction_id TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE invoices ADD COLUMN branch_code TEXT NOT NULL DEFAULT '01'")
+                db.execSQL("UPDATE invoices SET global_transaction_id = lower(hex(randomblob(16))) WHERE global_transaction_id = ''")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_invoices_global_transaction_id ON invoices(global_transaction_id)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_invoices_operator_id ON invoices(operator_id)")
-                db.execSQL("UPDATE invoices SET global_transaction_id = lower(hex(randomblob(16))) WHERE global_transaction_id = ''")
 
                 // invoice_lines
                 db.execSQL("ALTER TABLE invoice_lines ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
@@ -158,6 +158,15 @@ abstract class PosDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE invoices ADD COLUMN is_paid INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE invoices ADD COLUMN paid_amount_bdt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE invoices SET paid_amount_bdt = rounded_total_bdt WHERE is_paid = 1")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_invoices_is_paid ON invoices(is_paid)")
+            }
+        }
+
         fun hashPassword(password: String): String {
             return com.example.pos.core.security.PasswordSecurity.hashPassword(password)
         }
@@ -169,7 +178,7 @@ abstract class PosDatabase : RoomDatabase() {
                     PosDatabase::class.java,
                     "pos_invoice_master.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigrationOnDowngrade(true)
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
@@ -325,6 +334,8 @@ abstract class PosDatabase : RoomDatabase() {
                 customerInfo = "01700000000 / ABC-123",
                 rawTotalPaisa = 431125L, // 4311.25 BDT
                 roundedTotalBdt = 4311L, // 4311.00 BDT
+                isPaid = true,
+                paidAmountBdt = 4311L,
                 footerNote = "*** নিখুঁত মানের নিশ্চয়তা ***\nধন্যবাদ আবার আসবেন",
                 createdAt = System.currentTimeMillis() - 3600000L,
                 updatedAt = System.currentTimeMillis() - 3600000L

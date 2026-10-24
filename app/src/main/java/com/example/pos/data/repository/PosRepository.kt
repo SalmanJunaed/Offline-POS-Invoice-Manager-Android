@@ -1,6 +1,7 @@
 package com.example.pos.data.repository
 
 import android.content.Context
+import com.example.pos.core.error.PosResult
 import com.example.pos.data.db.AggregatedSalesResult
 import com.example.pos.data.db.AppSettingsEntity
 import com.example.pos.data.db.CompanyHeaderEntity
@@ -8,6 +9,7 @@ import com.example.pos.data.db.CustomerEntity
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.OperatorEntity
+import com.example.pos.data.db.PaymentRecordEntity
 import com.example.pos.data.db.PosDatabase
 import com.example.pos.data.db.ProductEntity
 import com.example.pos.domain.FinancialCalculationEngine
@@ -334,11 +336,16 @@ class PosRepository(
             history.updateInvoiceCustomerAndNote(orderId, customerInfo, footerNote)
         }
 
-    suspend fun saveOrder(invoice: InvoiceEntity, lines: List<InvoiceLineEntity>) =
-        withContext(Dispatchers.IO) {
-            invoiceDao.saveFullOrder(invoice, lines)
-            settingsDao.incrementOrderSequence()
+    suspend fun saveOrder(
+        invoice: InvoiceEntity,
+        lines: List<InvoiceLineEntity>,
+        payment: PaymentRecordEntity? = null
+    ) = withContext(Dispatchers.IO) {
+        when (val res = invoices.saveOrder(invoice, lines, payment)) {
+            is PosResult.Success -> Unit
+            is PosResult.Error -> throw java.lang.IllegalArgumentException(res.error.message)
         }
+    }
 
     suspend fun getNextOrderId(): String = withContext(Dispatchers.IO) {
         val settings = settingsDao.getSettings()

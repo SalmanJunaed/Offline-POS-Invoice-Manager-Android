@@ -247,9 +247,17 @@ object ThermalReceiptFormatter {
         val roundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
         sb.appendLine(format58mmSummaryLine(totalSummaryLabel, roundedStr))
 
-        // Full Paid status (after invoice content and BEFORE Footer Note)
-        if (isFullPaid) {
+        // Payment Status / Breakdown
+        val paidLabel = if (isBn) "জমা (Paid):" else "Paid:"
+        val dueLabel = if (isBn) "বাকি (Due):" else "Due:"
+        val paidAmountBdt = invoice.paidAmountBdt
+        val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
+
+        if (isFullPaid || dueAmountBdt <= 0L) {
             sb.appendLine(centerText(fullPaidText, width))
+        } else {
+            sb.appendLine(format58mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
+            sb.appendLine(format58mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
         }
 
         // 17. Footer notes (Centered)
@@ -401,9 +409,17 @@ object ThermalReceiptFormatter {
         val roundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
         sb.appendLine(format80mmSummaryLine(totalSummaryLabel, roundedStr))
 
-        // Full Paid status (after invoice content and BEFORE Footer Note)
-        if (isFullPaid) {
+        // Payment Status / Breakdown
+        val paidLabel = if (isBn) "জমা (Paid):" else "Paid:"
+        val dueLabel = if (isBn) "বাকি (Due):" else "Due:"
+        val paidAmountBdt = invoice.paidAmountBdt
+        val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
+
+        if (isFullPaid || dueAmountBdt <= 0L) {
             sb.appendLine(centerText(fullPaidText, width))
+        } else {
+            sb.appendLine(format80mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
+            sb.appendLine(format80mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
         }
 
         // 17. Footer notes (Centered)
@@ -766,8 +782,13 @@ object ThermalReceiptFormatter {
             }
         }
 
-        // Full Paid status (after invoice content and BEFORE Footer Note)
-        if (isFullPaid) {
+        // Payment Status / Breakdown
+        val paidLabel = if (isBn) "জমা (Paid):" else "Paid:"
+        val dueLabel = if (isBn) "বাকি (Due):" else "Due:"
+        val paidAmountBdt = invoice.paidAmountBdt
+        val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
+
+        if (isFullPaid || dueAmountBdt <= 0L) {
             val raster = renderTextToRaster(
                 text = fullPaidText,
                 widthDots = widthDots,
@@ -782,6 +803,30 @@ object ThermalReceiptFormatter {
                 out.write(CMD_BOLD_ON)
                 out.write("$fullPaidText\n".toByteArray(Charsets.UTF_8))
                 out.write(CMD_BOLD_OFF)
+            }
+        } else {
+            val paidStr = "$paidAmountBdt ৳"
+            val dueStr = "$dueAmountBdt ৳"
+            if (is80mm) {
+                val paidLine = format80mmSummaryLine(paidLabel, paidStr)
+                val dueLine = format80mmSummaryLine(dueLabel, dueStr)
+                val rasterPaid = render80mmSummaryRowToRaster(paidLabel, paidStr, widthDots, isBold = false)
+                    ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
+                if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
+
+                val rasterDue = render80mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
+                    ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
+                if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
+            } else {
+                val paidLine = format58mmSummaryLine(paidLabel, paidStr)
+                val dueLine = format58mmSummaryLine(dueLabel, dueStr)
+                val rasterPaid = render58mmSummaryRowToRaster(paidLabel, paidStr, widthDots, isBold = false)
+                    ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
+                if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
+
+                val rasterDue = render58mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
+                    ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
+                if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
             }
         }
 
