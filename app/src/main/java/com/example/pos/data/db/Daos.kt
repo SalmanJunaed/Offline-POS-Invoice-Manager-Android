@@ -508,6 +508,26 @@ interface InvoiceDao {
 
     @Query(
         """
+        SELECT * FROM invoices 
+        WHERE date_time BETWEEN :startDate AND :endDate
+        AND (:query = '' OR order_id LIKE '%' || :query || '%' OR customer_info LIKE '%' || :query || '%')
+        AND (:orderIdFilter = '' OR order_id LIKE '%' || :orderIdFilter || '%')
+        AND (:customerFilter = '' OR customer_info LIKE '%' || :customerFilter || '%')
+        ORDER BY date_time DESC 
+        LIMIT :limit
+        """
+    )
+    suspend fun getInvoicesForExportFiltered(
+        startDate: Long,
+        endDate: Long,
+        query: String = "",
+        orderIdFilter: String = "",
+        customerFilter: String = "",
+        limit: Int = 200000
+    ): List<InvoiceEntity>
+
+    @Query(
+        """
         SELECT order_id FROM invoices 
         WHERE order_id LIKE '%' || :query || '%' 
         ORDER BY date_time DESC 
@@ -567,9 +587,13 @@ interface InvoiceDao {
         incrementOrderSequence()
     }
 
+    @Query("DELETE FROM payment_records WHERE order_id = :orderId")
+    suspend fun deletePaymentsForOrder(orderId: String)
+
     @Transaction
     suspend fun deleteFullOrder(orderId: String) {
         deleteLinesForOrder(orderId)
+        deletePaymentsForOrder(orderId)
         deleteInvoice(orderId)
     }
 
@@ -629,6 +653,9 @@ interface PaymentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayment(payment: PaymentRecordEntity)
+
+    @Query("DELETE FROM payment_records WHERE order_id = :orderId")
+    suspend fun deletePaymentsForOrder(orderId: String)
 
     @Query("SELECT payment_method, COUNT(*) as count, SUM(amount_paid_paisa) as totalPaisa FROM payment_records GROUP BY payment_method")
     fun getPaymentMethodBreakdown(): Flow<List<PaymentMethodSummary>>

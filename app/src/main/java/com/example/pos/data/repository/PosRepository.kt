@@ -326,6 +326,17 @@ class PosRepository(
             invoiceDao.getInvoicesForExport(startDate, endDate)
         }
 
+    suspend fun getInvoicesForExportFiltered(
+        startDate: Long,
+        endDate: Long,
+        query: String = "",
+        orderIdFilter: String = "",
+        customerFilter: String = ""
+    ): List<InvoiceEntity> =
+        withContext(Dispatchers.IO) {
+            invoiceDao.getInvoicesForExportFiltered(startDate, endDate, query, orderIdFilter, customerFilter)
+        }
+
     suspend fun getMatchingOrderIds(query: String, limit: Int = 8): List<String> =
         withContext(Dispatchers.IO) {
             history.getMatchingOrderIds(query, limit)

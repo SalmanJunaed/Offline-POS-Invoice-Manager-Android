@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -102,13 +103,16 @@ import com.example.pos.domain.FinancialCalculationEngine
 import com.example.pos.ui.components.ItemTypeBadge
 import com.example.pos.ui.components.TopStationHeader
 import com.example.pos.ui.viewmodel.DraftInvoiceItem
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.example.pos.ui.viewmodel.PosViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InvoiceScreen(
     viewModel: PosViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val language by viewModel.language.collectAsState()
@@ -134,6 +138,19 @@ fun InvoiceScreen(
     var showCustomItemDialog by remember { mutableStateOf(false) }
     var showClearDraftConfirmDialog by remember { mutableStateOf(false) }
     var showDueDepositDialog by remember { mutableStateOf(false) }
+    var showBackDraftConfirmDialog by remember { mutableStateOf(false) }
+
+    val handleBack = {
+        if (draftItems.isNotEmpty()) {
+            showBackDraftConfirmDialog = true
+        } else {
+            onNavigateBack()
+        }
+    }
+
+    BackHandler {
+        handleBack()
+    }
 
     Column(
         modifier = modifier
@@ -153,6 +170,35 @@ fun InvoiceScreen(
                 viewModel.setThemeMode(if (themeMode == "DARK") "LIGHT" else "DARK")
             }
         )
+
+        // Sub-header navigation row with Back Button to Sales Home
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = handleBack,
+                    modifier = Modifier.testTag("btn_back_to_sales_home")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back to Sales Home"
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = if (language == "bn") "নতুন বিক্রয় ইনভয়েস (#$draftOrderId)" else "New Sales Invoice (#$draftOrderId)",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
 
         // POS Terminal: Catalog and Cart on the Same Screen
         BoxWithConstraints(
@@ -288,6 +334,44 @@ fun InvoiceScreen(
             onSubmit = { depositBdt ->
                 showDueDepositDialog = false
                 viewModel.checkoutDue(depositBdt, printDirectly = true)
+            }
+        )
+    }
+
+    // Back Navigation Draft Discard Confirmation Dialog
+    if (showBackDraftConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackDraftConfirmDialog = false },
+            title = {
+                Text(
+                    text = if (language == "bn") "খসড়া বাতিল করবেন?" else "Discard Draft?",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Text(
+                    text = if (language == "bn") "আপনার কার্টে আইটেম রয়েছে। আপনি কি কার্ট খালি করে সেলস হোমে ফিরে যেতে চান?"
+                    else "You have items in your cart. Do you want to discard the draft and return to Sales Home?",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.clearDraft()
+                        showBackDraftConfirmDialog = false
+                        onNavigateBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_discard_draft_btn")
+                ) {
+                    Text(if (language == "bn") "হ্যাঁ, বাতিল করুন" else "Yes, Discard")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBackDraftConfirmDialog = false }) {
+                    Text(Localization.get(Localization.Key.CANCEL, language))
+                }
             }
         )
     }
@@ -813,31 +897,7 @@ fun CartPane(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Blue Paid Button
-                    Button(
-                        onClick = onOpenPaidCheckout,
-                        enabled = !isProcessingOrder && draftItems.isNotEmpty(),
-                        modifier = Modifier
-                            .weight(1.2f)
-                            .height(52.dp)
-                            .testTag("checkout_paid_btn"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1976D2),
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (language == "bn") "পরিশোধ (${roundedTotalBdt} ৳)" else "Paid (${roundedTotalBdt} ৳)",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Red Due Button
+                    // Red Due Button (LEFT)
                     Button(
                         onClick = onOpenDueCheckout,
                         enabled = !isProcessingOrder && draftItems.isNotEmpty(),
@@ -855,6 +915,30 @@ fun CartPane(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (language == "bn") "বাকি (Due)" else "Due",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Blue Paid Button (RIGHT)
+                    Button(
+                        onClick = onOpenPaidCheckout,
+                        enabled = !isProcessingOrder && draftItems.isNotEmpty(),
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .height(52.dp)
+                            .testTag("checkout_paid_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1976D2),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (language == "bn") "পরিশোধ (${roundedTotalBdt} ৳)" else "Paid (${roundedTotalBdt} ৳)",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

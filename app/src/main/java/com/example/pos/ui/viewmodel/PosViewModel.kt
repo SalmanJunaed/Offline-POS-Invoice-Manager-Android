@@ -290,6 +290,41 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
 
+    // Printing concurrency guard
+    private val _isPrinting = MutableStateFlow(false)
+    val isPrinting: StateFlow<Boolean> = _isPrinting.asStateFlow()
+
+    // Navigation trigger post-preview
+    private val _navigateHomeAfterPreview = MutableStateFlow(false)
+    val navigateHomeAfterPreview: StateFlow<Boolean> = _navigateHomeAfterPreview.asStateFlow()
+
+    fun resetNavigateHomeAfterPreview() {
+        _navigateHomeAfterPreview.value = false
+    }
+
+    // Direct preview action dialog states (Edit metadata & Delete confirmation)
+    private val _invoiceToEdit = MutableStateFlow<InvoiceEntity?>(null)
+    val invoiceToEdit: StateFlow<InvoiceEntity?> = _invoiceToEdit.asStateFlow()
+
+    private val _invoiceToDelete = MutableStateFlow<InvoiceEntity?>(null)
+    val invoiceToDelete: StateFlow<InvoiceEntity?> = _invoiceToDelete.asStateFlow()
+
+    fun openEditInvoice(invoice: InvoiceEntity) {
+        _invoiceToEdit.value = invoice
+    }
+
+    fun closeEditInvoice() {
+        _invoiceToEdit.value = null
+    }
+
+    fun openDeleteInvoice(invoice: InvoiceEntity) {
+        _invoiceToDelete.value = invoice
+    }
+
+    fun closeDeleteInvoice() {
+        _invoiceToDelete.value = null
+    }
+
     // Transaction checkout in-flight guard
     private val _isProcessingOrder = MutableStateFlow(false)
     val isProcessingOrder: StateFlow<Boolean> = _isProcessingOrder.asStateFlow()
@@ -614,10 +649,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         _receiptPreviewOpen.value = true
     }
 
-    fun closeReceiptPreview() {
-        _receiptPreviewOpen.value = false
-    }
-
     fun checkoutPaid(printDirectly: Boolean = true) {
         val total = roundedTotalBdt.value
         checkoutOrder(isPaid = true, paidAmountBdt = total, printDirectly = printDirectly)
@@ -727,43 +758,18 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     lang = _language.value
                 )
 
-                if (printDirectly && settings?.bluetoothPrinterAddress != null) {
-                    val logoBitmap = EscPosPrinterEngine.loadLogoBitmapForThermal(
-                        getApplication(),
-                        companyHeader.value?.logoUri,
-                        paperSize
-                    )
-                    val payload = ThermalReceiptFormatter.buildEscPosReceipt(
-                        header = companyHeader.value,
-                        invoice = invoice,
-                        lines = lines,
-                        paperSize = paperSize,
-                        autoCutter = autoCutter,
-                        footerLine1 = settings?.footerNoteLine1 ?: "",
-                        footerLine2 = settings?.footerNoteLine2 ?: "",
-                        logoBitmap = logoBitmap,
-                        isFullPaid = finalIsPaid,
-                        lang = _language.value
-                    )
-                    val printResult = BluetoothPrinterManager.print(
-                        deviceAddress = settings.bluetoothPrinterAddress,
-                        deviceName = settings.bluetoothPrinterName,
-                        payload = payload
-                    )
-                    if (printResult.isFailure) {
-                        val isBn = _language.value == "bn"
-                        _toastMessage.value = if (isBn) "সংরক্ষিত হয়েছে! প্রিন্টার ত্রুটি: ${printResult.exceptionOrNull()?.message}" else "Saved to DB! Printer error: ${printResult.exceptionOrNull()?.message}"
-                    } else {
-                        _toastMessage.value = Localization.get(Localization.Key.SUCCESS_SAVED, _language.value)
-                    }
-                } else {
-                    _toastMessage.value = Localization.get(Localization.Key.SUCCESS_SAVED, _language.value)
-                }
-
+                // Mandatory Invoice Preview: Open preview after atomic save; do NOT print automatically!
+                _selectedInvoiceForReceipt.value = invoice
+                _receiptPopupLines.value = lines
                 _receiptPreviewText.value = receiptText
-                // Normal checkout directly returns to terminal without showing receipt preview modal
+                _receiptPreviewOpen.value = true
+                _isReceiptPopupOpen.value = true
+                _navigateHomeAfterPreview.value = true
 
-                // Clear draft and generate new order ID
+                val isBn = _language.value == "bn"
+                _toastMessage.value = if (isBn) "ইনভয়েস সফলভাবে সংরক্ষিত হয়েছে!" else "Invoice saved successfully!"
+
+                // Clear draft and generate new order ID for next sale
                 _draftItems.value = emptyList()
                 _customerInfo.value = ""
                 _draftPaidAmountBdt.value = ""
@@ -825,6 +831,28 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 if (rows > 0) {
                     val isBn = language.value == "bn"
                     _toastMessage.value = if (isBn) "ভাউচারের বিবরণ সফলভাবে আপডেট করা হয়েছে।" else "Voucher details updated successfully."
+                    val curSelected = _selectedInvoiceForReceipt.value
+                    if (curSelected != null && curSelected.orderId == orderId) {
+                        val updatedInv = curSelected.copy(
+                            customerInfo = customerInfo.trim(),
+                            footerNote = footerNote.trim()
+                        )
+                        _selectedInvoiceForReceipt.value = updatedInv
+                        val header = companyHeader.value
+                        val settings = appSettings.value
+                        val paperSize = settings?.paperSize ?: "58mm"
+                        val text = ThermalReceiptFormatter.generateReceiptText(
+                            header = header,
+                            invoice = updatedInv,
+                            lines = _receiptPopupLines.value,
+                            paperSize = paperSize,
+                            footerLine1 = settings?.footerNoteLine1 ?: "",
+                            footerLine2 = settings?.footerNoteLine2 ?: "",
+                            isFullPaid = updatedInv.isPaid,
+                            lang = _language.value
+                        )
+                        _receiptPreviewText.value = text
+                    }
                     refreshHistory()
                 }
             } catch (e: Exception) {
@@ -845,9 +873,35 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         refreshHistory()
     }
 
-    fun setCustomDateRange(startDate: Long, endDate: Long) {
-        _customStartDate.value = startDate
-        _customEndDate.value = endDate
+    fun setCustomDateRange(startDate: Long, endDate: Long? = null) {
+        val calStart = Calendar.getInstance().apply {
+            timeInMillis = startDate
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val actualStart = calStart.timeInMillis
+
+        val actualEnd = if (endDate != null) {
+            val calEnd = Calendar.getInstance().apply {
+                timeInMillis = endDate
+                set(Calendar.HOUR_OF_DAY, 23)
+                set(Calendar.MINUTE, 59)
+                set(Calendar.SECOND, 59)
+                set(Calendar.MILLISECOND, 999)
+            }
+            if (calEnd.timeInMillis < actualStart) {
+                actualStart + 86400000L - 1
+            } else {
+                calEnd.timeInMillis
+            }
+        } else {
+            actualStart + 86400000L - 1
+        }
+
+        _customStartDate.value = actualStart
+        _customEndDate.value = actualEnd
         _dateFilter.value = DateFilterMode.CUSTOM
         _currentPage.value = 0
         refreshHistory()
@@ -1064,7 +1118,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             }
             DateFilterMode.CUSTOM -> {
                 val start = customStart ?: 0L
-                val end = customEnd ?: (now + 86400000L)
+                val end = customEnd ?: if (customStart != null) (customStart + 86400000L - 1) else (now + 86400000L)
                 Pair(start, end)
             }
         }
@@ -1089,50 +1143,20 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openReceiptPopup(invoice: InvoiceEntity) {
+    fun fetchLinesForOrder(orderId: String) {
+        if (_orderLinesCache.value[orderId] != null) return
         viewModelScope.launch {
-            val lines = repository.getLinesForOrderDirect(invoice.orderId)
-            val header = companyHeader.value
-            val settings = appSettings.value
-            val paperSize = settings?.paperSize ?: "58mm"
-            val text = EscPosPrinterEngine.generateReceiptText(
-                header = header,
-                invoice = invoice,
-                lines = lines,
-                paperSize = paperSize,
-                footerLine1 = settings?.footerNoteLine1 ?: "",
-                footerLine2 = settings?.footerNoteLine2 ?: "",
-                lang = _language.value
-            )
-            _selectedInvoiceForReceipt.value = invoice
-            _receiptPopupLines.value = lines
-            _receiptPreviewText.value = text
-            _isReceiptPopupOpen.value = true
+            val lines = repository.getLinesForOrderDirect(orderId)
+            _orderLinesCache.value = _orderLinesCache.value + (orderId to lines)
         }
     }
 
-    fun closeReceiptPopup() {
-        _isReceiptPopupOpen.value = false
-        _selectedInvoiceForReceipt.value = null
-        _receiptPopupLines.value = emptyList()
-    }
-
-    fun reprintInvoice(invoice: InvoiceEntity) {
+    fun openInvoicePreview(invoice: InvoiceEntity) {
         viewModelScope.launch {
-            val settings = appSettings.value
-            val address = settings?.bluetoothPrinterAddress
             val lines = repository.getLinesForOrderDirect(invoice.orderId)
             val header = companyHeader.value
+            val settings = appSettings.value
             val paperSize = settings?.paperSize ?: "58mm"
-            val autoCutter = settings?.autoCutterEnabled ?: true
-            val isBn = language.value == "bn"
-
-            val validation = ThermalReceiptFormatter.validateInvoice(lines)
-            if (validation.isFailure) {
-                _toastMessage.value = if (isBn) "ভাউচারে কোনো পণ্য নেই" else "Cannot print voucher with no items"
-                return@launch
-            }
-
             val text = ThermalReceiptFormatter.generateReceiptText(
                 header = header,
                 invoice = invoice,
@@ -1140,38 +1164,89 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 paperSize = paperSize,
                 footerLine1 = settings?.footerNoteLine1 ?: "",
                 footerLine2 = settings?.footerNoteLine2 ?: "",
+                isFullPaid = invoice.isPaid,
                 lang = _language.value
             )
+            _selectedInvoiceForReceipt.value = invoice
+            _receiptPopupLines.value = lines
+            _receiptPreviewText.value = text
+            _receiptPreviewOpen.value = true
+            _isReceiptPopupOpen.value = true
+            _navigateHomeAfterPreview.value = false
+        }
+    }
 
-            if (address != null) {
-                val logoBitmap = EscPosPrinterEngine.loadLogoBitmapForThermal(
-                    getApplication(),
-                    header?.logoUri,
-                    paperSize
-                )
-                val payload = ThermalReceiptFormatter.buildEscPosReceipt(
-                    header = header,
-                    invoice = invoice,
-                    lines = lines,
-                    paperSize = paperSize,
-                    autoCutter = autoCutter,
-                    footerLine1 = settings?.footerNoteLine1 ?: "",
-                    footerLine2 = settings?.footerNoteLine2 ?: "",
-                    logoBitmap = logoBitmap,
-                    lang = _language.value
-                )
-                val res = BluetoothPrinterManager.print(address, settings?.bluetoothPrinterName, payload)
-                if (res.isSuccess) {
-                    _toastMessage.value = if (isBn) "ভাউচার #${invoice.orderId} প্রিন্ট সফল!" else "Receipt printed for #${invoice.orderId}!"
+    fun openReceiptPopup(invoice: InvoiceEntity) {
+        openInvoicePreview(invoice)
+    }
+
+    fun closeReceiptPreview() {
+        _receiptPreviewOpen.value = false
+        _isReceiptPopupOpen.value = false
+        _selectedInvoiceForReceipt.value = null
+        _receiptPopupLines.value = emptyList()
+        _receiptPreviewText.value = ""
+    }
+
+    fun closeReceiptPopup() {
+        closeReceiptPreview()
+    }
+
+    fun reprintInvoice(invoice: InvoiceEntity) {
+        // Mandatory preview before printing: open invoice preview first
+        openInvoicePreview(invoice)
+    }
+
+    fun printInvoiceFromPreview(targetInvoice: InvoiceEntity? = _selectedInvoiceForReceipt.value) {
+        val invoice = targetInvoice ?: return
+        if (_isPrinting.value) return
+        _isPrinting.value = true
+
+        viewModelScope.launch {
+            try {
+                val settings = appSettings.value
+                val address = settings?.bluetoothPrinterAddress
+                val lines = if (_receiptPopupLines.value.isNotEmpty() && _selectedInvoiceForReceipt.value?.orderId == invoice.orderId) {
+                    _receiptPopupLines.value
                 } else {
-                    _toastMessage.value = if (isBn) "প্রিন্টার ত্রুটি: ${res.exceptionOrNull()?.message}" else "Printer error: ${res.exceptionOrNull()?.message}"
+                    repository.getLinesForOrderDirect(invoice.orderId)
                 }
-            } else {
-                _receiptPreviewText.value = text
-                _selectedInvoiceForReceipt.value = invoice
-                _receiptPopupLines.value = lines
-                _isReceiptPopupOpen.value = true
-                _toastMessage.value = if (isBn) "কোনো ব্লুটুথ প্রিন্টার যুক্ত নেই। প্রিভিউ দেখানো হচ্ছে।" else "No Bluetooth printer configured. Showing preview."
+                val isBn = _language.value == "bn"
+
+                if (address != null) {
+                    val header = companyHeader.value
+                    val paperSize = settings?.paperSize ?: "58mm"
+                    val autoCutter = settings?.autoCutterEnabled ?: true
+                    val logoBitmap = EscPosPrinterEngine.loadLogoBitmapForThermal(
+                        getApplication(),
+                        header?.logoUri,
+                        paperSize
+                    )
+                    val payload = ThermalReceiptFormatter.buildEscPosReceipt(
+                        header = header,
+                        invoice = invoice,
+                        lines = lines,
+                        paperSize = paperSize,
+                        autoCutter = autoCutter,
+                        footerLine1 = settings?.footerNoteLine1 ?: "",
+                        footerLine2 = settings?.footerNoteLine2 ?: "",
+                        logoBitmap = logoBitmap,
+                        isFullPaid = invoice.isPaid,
+                        lang = _language.value
+                    )
+                    val res = BluetoothPrinterManager.print(address, settings?.bluetoothPrinterName, payload)
+                    if (res.isSuccess) {
+                        _toastMessage.value = if (isBn) "ভাউচার #${invoice.orderId} প্রিন্ট সফল!" else "Receipt printed for #${invoice.orderId}!"
+                    } else {
+                        _toastMessage.value = if (isBn) "প্রিন্টার ত্রুটি: ${res.exceptionOrNull()?.message}" else "Printer error: ${res.exceptionOrNull()?.message}"
+                    }
+                } else {
+                    _toastMessage.value = if (isBn) "কোনো ব্লুটুথ প্রিন্টার যুক্ত নেই।" else "No Bluetooth printer configured."
+                }
+            } catch (e: Exception) {
+                _toastMessage.value = "Print error: ${e.message}"
+            } finally {
+                _isPrinting.value = false
             }
         }
     }
@@ -1184,6 +1259,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 repository.history.deleteOrder(orderId)
                 if (_selectedInvoiceForReceipt.value?.orderId == orderId) {
                     _isReceiptPopupOpen.value = false
+                    _receiptPreviewOpen.value = false
                     _selectedInvoiceForReceipt.value = null
                 }
                 val isBn = language.value == "bn"
@@ -1323,11 +1399,14 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isExporting.value = true
             try {
-                val (startDate, endDate) = customRange ?: _exportDateRange.value ?: calculateDateRange(_dateFilter.value)
-                val invoices = repository.getInvoicesForExport(startDate, endDate)
+                val (startDate, endDate) = customRange ?: _exportDateRange.value ?: calculateDateRange(_dateFilter.value, _customStartDate.value, _customEndDate.value)
+                val query = _historyQuery.value
+                val orderId = _historyOrderIdFilter.value
+                val customer = _historyCustomerFilter.value
+                val invoices = repository.getInvoicesForExportFiltered(startDate, endDate, query, orderId, customer)
                 val branchCode = companyHeader.value?.branchNumber ?: "01"
-                val result = ExcelExchangeEngine.exportToXlsx(getApplication(), invoices, branchCode) { orderId ->
-                    repository.getLinesForOrderDirect(orderId)
+                val result = ExcelExchangeEngine.exportToXlsx(getApplication(), invoices, branchCode) { orderIdKey ->
+                    repository.getLinesForOrderDirect(orderIdKey)
                 }
                 result.onSuccess { file ->
                     val isBn = language.value == "bn"
@@ -1351,11 +1430,14 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isExporting.value = true
             try {
-                val (startDate, endDate) = customRange ?: _exportDateRange.value ?: calculateDateRange(_dateFilter.value)
-                val invoices = repository.getInvoicesForExport(startDate, endDate)
+                val (startDate, endDate) = customRange ?: _exportDateRange.value ?: calculateDateRange(_dateFilter.value, _customStartDate.value, _customEndDate.value)
+                val query = _historyQuery.value
+                val orderId = _historyOrderIdFilter.value
+                val customer = _historyCustomerFilter.value
+                val invoices = repository.getInvoicesForExportFiltered(startDate, endDate, query, orderId, customer)
                 val branchCode = companyHeader.value?.branchNumber ?: "01"
-                val result = ExcelExchangeEngine.exportToUri(getApplication(), uri, invoices, branchCode) { orderId ->
-                    repository.getLinesForOrderDirect(orderId)
+                val result = ExcelExchangeEngine.exportToUri(getApplication(), uri, invoices, branchCode) { orderIdKey ->
+                    repository.getLinesForOrderDirect(orderIdKey)
                 }
                 result.onSuccess {
                     val isBn = language.value == "bn"

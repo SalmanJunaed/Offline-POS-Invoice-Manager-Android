@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
@@ -76,7 +78,9 @@ fun ReceiptPreviewDialog(
     isFullPaid: Boolean = true,
     onDismiss: () -> Unit,
     onPrintBluetooth: () -> Unit,
-    onSharePdf: (() -> Unit)? = null
+    onSharePdf: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -206,35 +210,91 @@ fun ReceiptPreviewDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Bottom Buttons: Arranged vertically, one above the other
+                // Action Buttons: Print, PDF, Edit, Delete, Close
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Button 1: Print to Bluetooth ESC/POS
+                    // Button 1: Thermal Print (Bluetooth ESC/POS)
                     Button(
                         onClick = onPrintBluetooth,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("dialog_print_btn"),
+                            .height(46.dp)
+                            .testTag("preview_print_btn"),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            Localization.get(Localization.Key.BTN_PRINT_BLUETOOTH, language),
+                            if (language == "bn") "প্রিন্ট" else "Print",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                     }
 
-                    // Button 2: Close / Dismiss
+                    // Button 2 & 3: PDF and Edit (Metadata-only)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onSharePdf != null) {
+                            OutlinedButton(
+                                onClick = onSharePdf,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("preview_pdf_btn"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (language == "bn") "পিডিএফ" else "PDF", fontSize = 13.sp)
+                            }
+                        }
+
+                        if (onEdit != null) {
+                            OutlinedButton(
+                                onClick = onEdit,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("preview_edit_btn"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (language == "bn") "এডিট" else "Edit", fontSize = 13.sp)
+                            }
+                        }
+                    }
+
+                    // Button 4: Delete Invoice (Safe atomic deletion with confirmation)
+                    if (onDelete != null) {
+                        OutlinedButton(
+                            onClick = onDelete,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .testTag("preview_delete_btn"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                if (language == "bn") "মুছে ফেলুন" else "Delete",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                        }
+                    }
+
+                    // Button 5: Close / Dismiss
                     OutlinedButton(
                         onClick = onDismiss,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .height(42.dp)
                             .testTag("dialog_close_btn"),
                         shape = RoundedCornerShape(10.dp)
                     ) {
@@ -244,7 +304,7 @@ fun ReceiptPreviewDialog(
                         )
                     }
 
-                    // Secondary Utility Actions: Copy, Share, PDF
+                    // Secondary Utility Actions: Copy & Share Raw Text
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
@@ -272,23 +332,6 @@ fun ReceiptPreviewDialog(
                             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(if (language == "bn") "শেয়ার করুন" else "Share", fontSize = 12.sp)
-                        }
-
-                        if (onSharePdf != null) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            TextButton(
-                                onClick = onSharePdf,
-                                modifier = Modifier.testTag("preview_dialog_share_pdf_btn")
-                            ) {
-                                Icon(
-                                    Icons.Default.PictureAsPdf,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (language == "bn") "পিডিএফ" else "PDF", fontSize = 12.sp)
-                            }
                         }
                     }
                 }

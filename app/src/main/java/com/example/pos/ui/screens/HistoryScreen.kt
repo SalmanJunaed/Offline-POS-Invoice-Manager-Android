@@ -32,6 +32,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.CalendarToday
@@ -59,6 +61,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -119,7 +122,8 @@ import kotlin.math.min
 @Composable
 fun HistoryScreen(
     viewModel: PosViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenNewInvoice: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val language by viewModel.language.collectAsState()
@@ -164,11 +168,18 @@ fun HistoryScreen(
     var showAdvancedFilters by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var showCustomDateDialog by remember { mutableStateOf(false) }
+    var showDateFilterMenu by remember { mutableStateOf(false) }
+    var customStartDateText by remember { mutableStateOf("") }
+    var customEndDateText by remember { mutableStateOf("") }
+    var customDateErrorText by remember { mutableStateOf<String?>(null) }
     var showXlsxSync by remember { mutableStateOf(false) }
 
     val isDeletingInvoice by viewModel.isDeletingInvoice.collectAsState()
     var invoiceToDelete by remember { mutableStateOf<InvoiceEntity?>(null) }
     var invoiceToEdit by remember { mutableStateOf<InvoiceEntity?>(null) }
+    val vmInvoiceToEdit by viewModel.invoiceToEdit.collectAsState()
+    val vmInvoiceToDelete by viewModel.invoiceToDelete.collectAsState()
+    var selectedInvoiceForDetails by remember { mutableStateOf<InvoiceEntity?>(null) }
     val orderIdSuggestions by viewModel.orderIdSuggestions.collectAsState()
 
     val totalInvoiceCount by viewModel.totalInvoiceCount.collectAsState()
@@ -194,13 +205,16 @@ fun HistoryScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .testTag("history_screen")
     ) {
-        // Top Station Header
-        TopStationHeader(
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Top Station Header
+            TopStationHeader(
             company = companyHeader,
             operator = activeOperator,
             currentLanguage = language,
@@ -449,59 +463,270 @@ fun HistoryScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Date Filter Chips
-                        FlowRow(
+                        // Compact Date Filter Dropdown Selector
+                        val dateFilterDisplayLabel = when (dateFilter) {
+                            DateFilterMode.ALL -> Localization.get(Localization.Key.DATE_FILTER_ALL, language)
+                            DateFilterMode.TODAY -> Localization.get(Localization.Key.DATE_FILTER_TODAY, language)
+                            DateFilterMode.YESTERDAY -> Localization.get(Localization.Key.DATE_FILTER_YESTERDAY, language)
+                            DateFilterMode.WEEK -> Localization.get(Localization.Key.DATE_FILTER_WEEK, language)
+                            DateFilterMode.MONTH -> Localization.get(Localization.Key.DATE_FILTER_MONTH, language)
+                            DateFilterMode.SIX_MONTHS -> Localization.get(Localization.Key.DATE_FILTER_SIX_MONTHS, language)
+                            DateFilterMode.YEAR -> Localization.get(Localization.Key.DATE_FILTER_YEAR, language)
+                            DateFilterMode.CUSTOM -> Localization.get(Localization.Key.DATE_FILTER_CUSTOM, language)
+                        }
+
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.ALL,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.ALL) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_ALL, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.TODAY,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.TODAY) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_TODAY, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.YESTERDAY,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.YESTERDAY) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_YESTERDAY, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.WEEK,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.WEEK) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_WEEK, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.MONTH,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.MONTH) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_MONTH, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.SIX_MONTHS,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.SIX_MONTHS) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_SIX_MONTHS, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.YEAR,
-                                onClick = { viewModel.setDateFilter(DateFilterMode.YEAR) },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_YEAR, language), fontSize = 11.sp) }
-                            )
-                            FilterChip(
-                                selected = dateFilter == DateFilterMode.CUSTOM,
-                                onClick = { showCustomDateDialog = true },
-                                leadingIcon = {
+                            Box {
+                                OutlinedButton(
+                                    onClick = { showDateFilterMenu = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("date_filter_dropdown_btn")
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.CalendarToday,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(14.dp)
+                                        contentDescription = "Date Filter",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
-                                },
-                                label = { Text(Localization.get(Localization.Key.DATE_FILTER_CUSTOM, language), fontSize = 11.sp) }
-                            )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = dateFilterDisplayLabel,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                DropdownMenu(
+                                    expanded = showDateFilterMenu,
+                                    onDismissRequest = { showDateFilterMenu = false },
+                                    modifier = Modifier.testTag("date_filter_menu")
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_ALL, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.ALL)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_all")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_TODAY, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.TODAY)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_today")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_YESTERDAY, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.YESTERDAY)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_yesterday")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_WEEK, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.WEEK)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_week")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_MONTH, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.MONTH)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_month")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_SIX_MONTHS, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.SIX_MONTHS)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_six_months")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_YEAR, language), fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.YEAR)
+                                            showDateFilterMenu = false
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_year")
+                                    )
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text(Localization.get(Localization.Key.DATE_FILTER_CUSTOM, language), fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                                        onClick = {
+                                            viewModel.setDateFilter(DateFilterMode.CUSTOM)
+                                            showDateFilterMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(imageVector = Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        },
+                                        modifier = Modifier.testTag("date_filter_option_custom")
+                                    )
+                                }
+                            }
+
+                            if (dateFilter != DateFilterMode.ALL || historyQuery.isNotBlank() || historyOrderIdFilter.isNotBlank() || historyCustomerFilter.isNotBlank()) {
+                                TextButton(
+                                    onClick = {
+                                        customStartDateText = ""
+                                        customEndDateText = ""
+                                        customDateErrorText = null
+                                        viewModel.clearAllFilters()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = Localization.get(Localization.Key.FILTER_CLEAR_ALL, language),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+
+                        // Compact Custom Date Picker (Start Date and optional End Date)
+                        if (dateFilter == DateFilterMode.CUSTOM) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("compact_custom_date_section"),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OutlinedTextField(
+                                            value = customStartDateText,
+                                            onValueChange = { newValue ->
+                                                customStartDateText = newValue
+                                                val parsedStart = DateTimeUtils.parseDateDdMmYyyy(newValue)
+                                                val parsedEnd = if (customEndDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customEndDateText) else null
+                                                if (newValue.isNotBlank() && parsedStart == null) {
+                                                    customDateErrorText = "Invalid start date (dd-MM-yyyy)"
+                                                } else if (parsedStart != null && customEndDateText.isNotBlank() && parsedEnd == null) {
+                                                    customDateErrorText = "Invalid end date (dd-MM-yyyy)"
+                                                } else if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
+                                                    customDateErrorText = "End date cannot be earlier than start date"
+                                                } else if (parsedStart != null) {
+                                                    customDateErrorText = null
+                                                    viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
+                                                } else if (newValue.isBlank()) {
+                                                    customDateErrorText = null
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("custom_date_from_input"),
+                                            label = { Text(if (language == "bn") "শুরুর তারিখ" else "Start Date", fontSize = 10.sp) },
+                                            placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+
+                                        OutlinedTextField(
+                                            value = customEndDateText,
+                                            onValueChange = { newValue ->
+                                                customEndDateText = newValue
+                                                val parsedStart = if (customStartDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customStartDateText) else null
+                                                val parsedEnd = DateTimeUtils.parseDateDdMmYyyy(newValue)
+                                                if (newValue.isNotBlank() && parsedEnd == null) {
+                                                    customDateErrorText = "Invalid end date (dd-MM-yyyy)"
+                                                } else if (parsedStart == null && customStartDateText.isNotBlank()) {
+                                                    customDateErrorText = "Invalid start date (dd-MM-yyyy)"
+                                                } else if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
+                                                    customDateErrorText = "End date cannot be earlier than start date"
+                                                } else if (parsedStart != null) {
+                                                    customDateErrorText = null
+                                                    viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
+                                                } else if (newValue.isBlank()) {
+                                                    if (parsedStart != null) {
+                                                        customDateErrorText = null
+                                                        viewModel.setCustomDateRange(parsedStart.time, null)
+                                                    } else {
+                                                        customDateErrorText = null
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("custom_date_to_input"),
+                                            label = { Text(if (language == "bn") "শেষ তারিখ (ঐচ্ছিক)" else "End Date (Optional)", fontSize = 10.sp) },
+                                            placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                    }
+
+                                    if (customDateErrorText != null) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = customDateErrorText!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.testTag("custom_date_error_text")
+                                        )
+                                    }
+
+                                    val parsedStart = DateTimeUtils.parseDateDdMmYyyy(customStartDateText)
+                                    val parsedEnd = if (customEndDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customEndDateText) else null
+                                    val isCustomSelectionValid = parsedStart != null && customDateErrorText == null && (customEndDateText.isBlank() || (parsedEnd != null && !parsedEnd.before(parsedStart)))
+
+                                    if (isCustomSelectionValid) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Button(
+                                            onClick = {
+                                                val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                                                try {
+                                                    exportFileLauncher.launch("POS_Sales_Export_$timestamp.xlsx")
+                                                } catch (e: Exception) {
+                                                    viewModel.exportSalesToExcel { /* handled in viewModel */ }
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(38.dp)
+                                                .testTag("btn_export_custom_xlsx"),
+                                            shape = RoundedCornerShape(6.dp),
+                                            enabled = !isExporting && !isImporting
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.FileDownload,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "এক্সপোর্ট XLSX",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         // Specific Order ID & Customer Filter Row (Collapsible)
@@ -840,7 +1065,11 @@ fun HistoryScreen(
                         lines = cachedLines,
                         language = language,
                         onToggleExpand = { viewModel.toggleOrderExpansion(invoice.orderId) },
-                        onViewReceipt = { viewModel.openReceiptPopup(invoice) },
+                        onSelectForDetails = {
+                            // Phase 3 Stage A: Direct saved voucher preview on card tap
+                            viewModel.openInvoicePreview(invoice)
+                        },
+                        onViewReceipt = { viewModel.openInvoicePreview(invoice) },
                         onSharePdf = { viewModel.generateAndShareInvoicePdf(context, invoice, cachedLines) },
                         onDelete = { invoiceToDelete = invoice },
                         onEdit = { invoiceToEdit = invoice }
@@ -935,52 +1164,80 @@ fun HistoryScreen(
         }
     }
 
-    // Popup Dialog for Instant Receipt View & Print
-    if (isReceiptPopupOpen && selectedInvoiceForReceipt != null) {
-        ReceiptDetailsDialog(
-            invoice = selectedInvoiceForReceipt!!,
-            lines = receiptPopupLines,
-            receiptText = receiptPopupText,
+    // Floating Action Button for New Invoice (inside BoxScope)
+    FloatingActionButton(
+            onClick = onOpenNewInvoice,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .testTag("fab_new_invoice"),
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "New Invoice"
+            )
+        }
+    }
+
+    // Dedicated Invoice Details Dialog (Phase 3)
+    if (selectedInvoiceForDetails != null) {
+        val target = selectedInvoiceForDetails!!
+        val cachedLines = orderLinesCache[target.orderId] ?: (if (expandedOrderId == target.orderId) expandedLines else emptyList())
+        InvoiceDetailsDialog(
+            invoice = target,
+            lines = cachedLines,
             language = language,
-            logoUri = companyHeader?.logoUri,
-            onClose = { viewModel.closeReceiptPopup() },
-            onReprint = { viewModel.reprintInvoice(selectedInvoiceForReceipt!!) },
+            onDismiss = { selectedInvoiceForDetails = null },
+            onPreviewPrint = {
+                viewModel.openInvoicePreview(target)
+                selectedInvoiceForDetails = null
+            },
             onSharePdf = {
-                viewModel.generateAndShareInvoicePdf(
-                    context = context,
-                    invoice = selectedInvoiceForReceipt!!,
-                    lines = receiptPopupLines
-                )
+                viewModel.generateAndShareInvoicePdf(context, target, cachedLines)
+            },
+            onEdit = {
+                val toEdit = target
+                selectedInvoiceForDetails = null
+                invoiceToEdit = toEdit
             },
             onDelete = {
-                val toDel = selectedInvoiceForReceipt!!
-                viewModel.closeReceiptPopup()
+                val toDel = target
+                selectedInvoiceForDetails = null
                 invoiceToDelete = toDel
             }
         )
     }
 
-    // Safe Edit Dialog for Invoice Details
-    if (invoiceToEdit != null) {
-        val target = invoiceToEdit!!
+    // Safe Edit Dialog for Invoice Details (from card or direct preview)
+    val activeInvoiceToEdit = invoiceToEdit ?: vmInvoiceToEdit
+    if (activeInvoiceToEdit != null) {
+        val target = activeInvoiceToEdit
         EditInvoiceDialog(
             invoice = target,
             language = language,
-            onDismiss = { invoiceToEdit = null },
+            onDismiss = {
+                invoiceToEdit = null
+                viewModel.closeEditInvoice()
+            },
             onSave = { updatedCustomer, updatedNote ->
                 viewModel.updateInvoiceDetails(target.orderId, updatedCustomer, updatedNote)
                 invoiceToEdit = null
+                viewModel.closeEditInvoice()
             }
         )
     }
 
-    // Safe Delete Confirmation Dialog
-    if (invoiceToDelete != null) {
-        val target = invoiceToDelete!!
+    // Safe Delete Confirmation Dialog (from card or direct preview)
+    val activeInvoiceToDelete = invoiceToDelete ?: vmInvoiceToDelete
+    if (activeInvoiceToDelete != null) {
+        val target = activeInvoiceToDelete
         AlertDialog(
             onDismissRequest = {
                 if (!isDeletingInvoice) {
                     invoiceToDelete = null
+                    viewModel.closeDeleteInvoice()
                 }
             },
             icon = {
@@ -1013,6 +1270,7 @@ fun HistoryScreen(
                     onClick = {
                         viewModel.deleteInvoice(target.orderId) {
                             invoiceToDelete = null
+                            viewModel.closeDeleteInvoice()
                         }
                     },
                     enabled = !isDeletingInvoice,
@@ -1024,7 +1282,10 @@ fun HistoryScreen(
             },
             dismissButton = {
                 TextButton(
-                    onClick = { invoiceToDelete = null },
+                    onClick = {
+                        invoiceToDelete = null
+                        viewModel.closeDeleteInvoice()
+                    },
                     enabled = !isDeletingInvoice
                 ) {
                     Text(Localization.get(Localization.Key.CANCEL, language))
@@ -1102,6 +1363,7 @@ fun HistoryInvoiceCard(
     lines: List<InvoiceLineEntity>,
     language: String,
     onToggleExpand: () -> Unit,
+    onSelectForDetails: () -> Unit = onToggleExpand,
     onViewReceipt: () -> Unit,
     onSharePdf: (() -> Unit)? = null,
     onDelete: () -> Unit = {},
@@ -1109,19 +1371,21 @@ fun HistoryInvoiceCard(
 ) {
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
     val formattedDate = remember(invoice.dateTime) { dateFormat.format(Date(invoice.dateTime)) }
+    val isBn = language == "bn"
+    val dueAmountBdt = invoice.roundedTotalBdt - invoice.paidAmountBdt
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clickable { onToggleExpand() }
+            .clickable { onSelectForDetails() }
             .testTag("invoice_card_${invoice.orderId}"),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            // Header Row: Order ID, Branch, Date & Time, Rounded Total Amount
+            // Header Row: Order ID, Status Badge, Branch, Total Amount
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1138,6 +1402,29 @@ fun HistoryInvoiceCard(
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                         )
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // Material 3 Status Badge (Green Paid / Red Due)
+                    val badgeText = if (invoice.isPaid) {
+                        if (isBn) "পরিশোধ" else "PAID"
+                    } else {
+                        if (isBn) "বাকি" else "DUE"
+                    }
+                    val badgeColor = if (invoice.isPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = badgeColor,
+                        modifier = Modifier.testTag("status_badge_${invoice.orderId}")
+                    ) {
+                        Text(
+                            text = badgeText,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        )
+                    }
+
                     Spacer(modifier = Modifier.width(6.dp))
                     Surface(
                         shape = RoundedCornerShape(4.dp),
@@ -1161,18 +1448,41 @@ fun HistoryInvoiceCard(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         )
-                        Text(
-                            text = "Raw: ${FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)} ৳",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (isBn) "জমা: ${invoice.paidAmountBdt} ৳" else "Paid: ${invoice.paidAmountBdt} ৳",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                    color = if (invoice.isPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                modifier = Modifier.testTag("paid_amount_${invoice.orderId}")
+                            )
+                            if (!invoice.isPaid || dueAmountBdt > 0) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isBn) "বাকি: $dueAmountBdt ৳" else "Due: $dueAmountBdt ৳",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.error
+                                    ),
+                                    modifier = Modifier.testTag("due_amount_${invoice.orderId}")
+                                )
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = "Expand",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    IconButton(
+                        onClick = onToggleExpand,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = "Expand",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -1231,126 +1541,6 @@ fun HistoryInvoiceCard(
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.secondary
                     )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Responsive Two-Row Action Controls (fits smoothly on 360dp, 393dp, 412dp)
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // Row 1: Primary Viewing & Export (View Receipt & PDF)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // Popup Details Button
-                    OutlinedButton(
-                        onClick = { onViewReceipt() },
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp)
-                            .testTag("view_receipt_${invoice.orderId}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Receipt,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = Localization.get(Localization.Key.VIEW_RECEIPT_POPUP, language),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Direct PDF Share Button
-                    if (onSharePdf != null) {
-                        OutlinedButton(
-                            onClick = { onSharePdf() },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .testTag("card_share_pdf_${invoice.orderId}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PictureAsPdf,
-                                contentDescription = "PDF",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "PDF",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-
-                // Row 2: Management Actions (Update & Delete)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // Update / Safe Edit Button
-                    OutlinedButton(
-                        onClick = { onEdit() },
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp)
-                            .testTag("edit_invoice_${invoice.orderId}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "Update",
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = Localization.get(Localization.Key.BTN_UPDATE_INVOICE, language),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Delete Button
-                    OutlinedButton(
-                        onClick = { onDelete() },
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp)
-                            .testTag("delete_invoice_${invoice.orderId}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Delete",
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = Localization.get(Localization.Key.BTN_DELETE_TRANSACTION, language),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
                 }
             }
 
@@ -1805,3 +1995,304 @@ fun EditInvoiceDialog(
         }
     )
 }
+
+@Composable
+fun InvoiceDetailsDialog(
+    invoice: InvoiceEntity,
+    lines: List<InvoiceLineEntity>,
+    language: String,
+    onDismiss: () -> Unit,
+    onPreviewPrint: () -> Unit,
+    onSharePdf: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val isBn = language == "bn"
+    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
+    val formattedDate = remember(invoice.dateTime) { dateFormat.format(Date(invoice.dateTime)) }
+    val dueAmountBdt = invoice.roundedTotalBdt - invoice.paidAmountBdt
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp)
+                .testTag("invoice_details_dialog"),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Header: Title and Close
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = if (isBn) "ইনভয়েস বিস্তারিত #${invoice.orderId}" else "Invoice Details #${invoice.orderId}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = formattedDate,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Status Badge & Operator
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = if (invoice.isPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("details_status_badge_${invoice.orderId}")
+                    ) {
+                        Text(
+                            text = if (invoice.isPaid) {
+                                if (isBn) "পরিশোধিত (PAID)" else "PAID"
+                            } else {
+                                if (isBn) "বাকি (DUE)" else "DUE"
+                            },
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+
+                    Text(
+                        text = "Op: ${invoice.operatorName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Customer & Footer Note Card
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            text = "${if (isBn) "ক্রেতা" else "Customer"}: ${if (invoice.customerInfo.isNotBlank()) invoice.customerInfo else if (isBn) "সাধারণ ক্রেতা" else "Walk-in"}",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
+                        )
+                        if (invoice.footerNote.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${if (isBn) "নোট" else "Note"}: ${invoice.footerNote}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Itemized lines
+                Text(
+                    text = if (isBn) "পণ্য / সেবাসমূহ" else "Itemized Lines",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (lines.isEmpty()) {
+                    Text(
+                        text = if (isBn) "লোড হচ্ছে..." else "Loading items...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                } else {
+                    lines.forEach { line ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1.5f)) {
+                                Text(
+                                    text = line.itemName,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
+                                )
+                                Text(
+                                    text = "${line.quantityStr} ${line.unit} @ ${FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa)} ৳",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "${FinancialCalculationEngine.formatPaisaToBdt(line.lineTotalPaisa)} ৳",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Financial Breakdown (Raw subtotal, rounded payable, rounding adjustment, paid, due)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = if (isBn) "মোট সাবটোটাল:" else "Raw Subtotal:", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "${FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)} ৳", style = MaterialTheme.typography.bodySmall)
+                }
+
+                val roundingDiff = (invoice.roundedTotalBdt * 100L) - invoice.rawTotalPaisa
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = if (isBn) "রাউন্ডিং সমন্বয়:" else "Rounding Adjustment:", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = "${if (roundingDiff >= 0) "+" else ""}${FinancialCalculationEngine.formatPaisaToBdt(roundingDiff)} ৳",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (isBn) "সর্বমোট প্রদেয়:" else "Rounded Payable:",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)} ৳",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Paid & Due Breakdown
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = if (isBn) "পরিশোধিত (Paid):" else "Paid Amount:", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
+                    Text(
+                        text = "${invoice.paidAmountBdt} ৳",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = if (invoice.isPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = if (isBn) "বাকি (Due):" else "Remaining Due:", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
+                    Text(
+                        text = "$dueAmountBdt ৳",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = if (dueAmountBdt > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Action Buttons
+                // 1. Preview / Print button (Mandatory preview first!)
+                Button(
+                    onClick = onPreviewPrint,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("details_preview_print_btn"),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (isBn) "প্রিভিউ ও প্রিন্ট" else "Preview / Print")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 2. Row: PDF Share & Edit Metadata
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onSharePdf,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .testTag("details_share_pdf_btn"),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (isBn) "পিডিএফ" else "PDF", fontSize = 12.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = onEdit,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .testTag("details_edit_btn"),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (isBn) "এডিট" else "Edit", fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 3. Delete Button (Requires confirmation dialog)
+                OutlinedButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .testTag("details_delete_btn"),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(Localization.get(Localization.Key.BTN_DELETE_TRANSACTION, language), fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+

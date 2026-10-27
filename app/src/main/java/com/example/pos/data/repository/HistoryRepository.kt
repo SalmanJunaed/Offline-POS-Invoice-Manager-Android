@@ -99,6 +99,15 @@ interface HistoryRepository {
 
     suspend fun getInvoicesForExport(startDate: Long, endDate: Long, limit: Int = 200000): List<InvoiceEntity>
 
+    suspend fun getInvoicesForExportFiltered(
+        startDate: Long,
+        endDate: Long,
+        query: String = "",
+        orderIdFilter: String = "",
+        customerFilter: String = "",
+        limit: Int = 200000
+    ): List<InvoiceEntity>
+
     suspend fun getMatchingOrderIds(query: String, limit: Int = 8): List<String>
 
     suspend fun updateInvoiceCustomerAndNote(orderId: String, customerInfo: String, footerNote: String): Int
@@ -214,6 +223,16 @@ class HistoryRepositoryImpl(private val invoiceDao: InvoiceDao) : HistoryReposit
 
     override suspend fun getInvoicesForExport(startDate: Long, endDate: Long, limit: Int): List<InvoiceEntity> =
         invoiceDao.getInvoicesForExport(startDate, endDate, limit)
+
+    override suspend fun getInvoicesForExportFiltered(
+        startDate: Long,
+        endDate: Long,
+        query: String,
+        orderIdFilter: String,
+        customerFilter: String,
+        limit: Int
+    ): List<InvoiceEntity> =
+        invoiceDao.getInvoicesForExportFiltered(startDate, endDate, query, orderIdFilter, customerFilter, limit)
 
     override suspend fun getMatchingOrderIds(query: String, limit: Int): List<String> =
         invoiceDao.getMatchingOrderIds(query, limit)

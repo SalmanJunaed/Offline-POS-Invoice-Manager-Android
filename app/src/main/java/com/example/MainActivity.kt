@@ -79,9 +79,12 @@ fun PosMainApp(viewModel: PosViewModel) {
     val isDraftFullPaid by viewModel.isDraftFullPaid.collectAsState()
 
     val isSessionChecking by viewModel.isSessionChecking.collectAsState()
+    val navigateHomeAfterPreview by viewModel.navigateHomeAfterPreview.collectAsState()
+    val selectedInvoiceForReceipt by viewModel.selectedInvoiceForReceipt.collectAsState()
 
     var showSplash by remember { mutableStateOf(true) }
     var currentNavIndex by remember { mutableIntStateOf(0) }
+    var isNewInvoiceOpen by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(toastMessage) {
@@ -104,6 +107,7 @@ fun PosMainApp(viewModel: PosViewModel) {
             language = language,
             onLoginSuccess = {
                 currentNavIndex = 0
+                isNewInvoiceOpen = false
             }
         )
     } else {
@@ -113,38 +117,33 @@ fun PosMainApp(viewModel: PosViewModel) {
                 .testTag("pos_main_scaffold"),
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                NavigationBar(modifier = Modifier.testTag("bottom_nav_bar")) {
-                    NavigationBarItem(
-                        selected = currentNavIndex == 0,
-                        onClick = { currentNavIndex = 0 },
-                        icon = { Icon(Icons.Default.PointOfSale, contentDescription = "Billing") },
-                        label = { Text(Localization.get(Localization.Key.NAV_INVOICE, language)) },
-                        modifier = Modifier.testTag("nav_invoice_item")
-                    )
-                    NavigationBarItem(
-                        selected = currentNavIndex == 1,
-                        onClick = {
-                            currentNavIndex = 1
-                            viewModel.refreshHistory()
-                        },
-                        icon = { Icon(Icons.Default.History, contentDescription = "History") },
-                        label = { Text(Localization.get(Localization.Key.NAV_HISTORY, language)) },
-                        modifier = Modifier.testTag("nav_history_item")
-                    )
-                    NavigationBarItem(
-                        selected = currentNavIndex == 2,
-                        onClick = { currentNavIndex = 2 },
-                        icon = { Icon(Icons.Default.Inventory, contentDescription = "Products") },
-                        label = { Text(Localization.get(Localization.Key.NAV_PRODUCTS, language)) },
-                        modifier = Modifier.testTag("nav_products_item")
-                    )
-                    NavigationBarItem(
-                        selected = currentNavIndex == 3,
-                        onClick = { currentNavIndex = 3 },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                        label = { Text(Localization.get(Localization.Key.NAV_SETTINGS, language)) },
-                        modifier = Modifier.testTag("nav_settings_item")
-                    )
+                if (!isNewInvoiceOpen) {
+                    NavigationBar(modifier = Modifier.testTag("bottom_nav_bar")) {
+                        NavigationBarItem(
+                            selected = currentNavIndex == 0,
+                            onClick = {
+                                currentNavIndex = 0
+                                viewModel.refreshHistory()
+                            },
+                            icon = { Icon(Icons.Default.History, contentDescription = "Sales Home") },
+                            label = { Text(Localization.get(Localization.Key.NAV_HISTORY, language)) },
+                            modifier = Modifier.testTag("nav_history_item")
+                        )
+                        NavigationBarItem(
+                            selected = currentNavIndex == 1,
+                            onClick = { currentNavIndex = 1 },
+                            icon = { Icon(Icons.Default.Inventory, contentDescription = "Products") },
+                            label = { Text(Localization.get(Localization.Key.NAV_PRODUCTS, language)) },
+                            modifier = Modifier.testTag("nav_products_item")
+                        )
+                        NavigationBarItem(
+                            selected = currentNavIndex == 2,
+                            onClick = { currentNavIndex = 2 },
+                            icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                            label = { Text(Localization.get(Localization.Key.NAV_SETTINGS, language)) },
+                            modifier = Modifier.testTag("nav_settings_item")
+                        )
+                    }
                 }
             }
         ) { innerPadding ->
@@ -152,16 +151,27 @@ fun PosMainApp(viewModel: PosViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
 
-            when (currentNavIndex) {
-                0 -> InvoiceScreen(viewModel = viewModel, modifier = screenModifier)
-                1 -> HistoryScreen(viewModel = viewModel, modifier = screenModifier)
-                2 -> ProductsScreen(viewModel = viewModel, modifier = screenModifier)
-                3 -> SettingsScreen(viewModel = viewModel, modifier = screenModifier)
+            if (isNewInvoiceOpen) {
+                InvoiceScreen(
+                    viewModel = viewModel,
+                    modifier = screenModifier,
+                    onNavigateBack = { isNewInvoiceOpen = false }
+                )
+            } else {
+                when (currentNavIndex) {
+                    0 -> HistoryScreen(
+                        viewModel = viewModel,
+                        modifier = screenModifier,
+                        onOpenNewInvoice = { isNewInvoiceOpen = true }
+                    )
+                    1 -> ProductsScreen(viewModel = viewModel, modifier = screenModifier)
+                    2 -> SettingsScreen(viewModel = viewModel, modifier = screenModifier)
+                }
             }
         }
     }
 
-    // Thermal Receipt Preview Dialog
+    // Thermal Receipt Preview Dialog (Mandatory preview before printing)
     if (receiptPreviewOpen) {
         ReceiptPreviewDialog(
             receiptText = receiptPreviewText,
@@ -169,9 +179,47 @@ fun PosMainApp(viewModel: PosViewModel) {
             logoUri = companyHeader?.logoUri,
             companyName = companyHeader?.companyName,
             isFullPaid = isDraftFullPaid,
-            onDismiss = { viewModel.closeReceiptPreview() },
+            onDismiss = {
+                viewModel.closeReceiptPreview()
+                if (navigateHomeAfterPreview) {
+                    isNewInvoiceOpen = false
+                    viewModel.resetNavigateHomeAfterPreview()
+                    viewModel.refreshHistory()
+                }
+            },
             onPrintBluetooth = {
-                viewModel.testPrint()
+                val targetInv = selectedInvoiceForReceipt
+                if (targetInv != null) {
+                    viewModel.printInvoiceFromPreview(targetInv)
+                } else {
+                    viewModel.testPrint()
+                }
+                if (navigateHomeAfterPreview) {
+                    isNewInvoiceOpen = false
+                    viewModel.resetNavigateHomeAfterPreview()
+                    viewModel.refreshHistory()
+                }
+            },
+            onSharePdf = {
+                selectedInvoiceForReceipt?.let { inv ->
+                    viewModel.generateAndShareInvoicePdf(
+                        context = context,
+                        invoice = inv,
+                        lines = viewModel.receiptPopupLines.value
+                    )
+                }
+            },
+            onEdit = {
+                selectedInvoiceForReceipt?.let { inv ->
+                    viewModel.closeReceiptPreview()
+                    viewModel.openEditInvoice(inv)
+                }
+            },
+            onDelete = {
+                selectedInvoiceForReceipt?.let { inv ->
+                    viewModel.closeReceiptPreview()
+                    viewModel.openDeleteInvoice(inv)
+                }
             }
         )
     }
