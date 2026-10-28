@@ -1,9 +1,13 @@
 package com.example.pos.ui.screens
 
+import android.app.DatePickerDialog
+import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -73,15 +77,18 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +97,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -166,7 +175,6 @@ fun HistoryScreen(
     var activeHistoryTab by remember { mutableStateOf(0) }
 
     // UI state for filter dialogs
-    var showAdvancedFilters by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var showCustomDateDialog by remember { mutableStateOf(false) }
     var showDateFilterMenu by remember { mutableStateOf(false) }
@@ -182,6 +190,12 @@ fun HistoryScreen(
     val vmInvoiceToDelete by viewModel.invoiceToDelete.collectAsState()
     var selectedInvoiceForDetails by remember { mutableStateOf<InvoiceEntity?>(null) }
     val orderIdSuggestions by viewModel.orderIdSuggestions.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.closeDetailsDialogEvent.collect {
+            selectedInvoiceForDetails = null
+        }
+    }
 
     val totalInvoiceCount by viewModel.totalInvoiceCount.collectAsState()
     val remainingCapacity = (viewModel.supportedCapacity - totalInvoiceCount).coerceAtLeast(0)
@@ -297,38 +311,70 @@ fun HistoryScreen(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedTextField(
+                            val searchInteractionSource = remember { MutableInteractionSource() }
+                            BasicTextField(
                                 value = historyQuery,
                                 onValueChange = { viewModel.setHistoryQuery(it) },
                                 modifier = Modifier
                                     .weight(1f)
+                                    .height(42.dp)
                                     .testTag("history_search_input"),
-                                placeholder = {
-                                    Text(
-                                        text = Localization.get(Localization.Key.SEARCH_ORDERS_PLACEHOLDER, language),
-                                        fontSize = 12.sp
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Search,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                },
-                                trailingIcon = {
-                                    if (historyQuery.isNotBlank()) {
-                                        IconButton(onClick = { viewModel.setHistoryQuery("") }) {
+                                interactionSource = searchInteractionSource,
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                ),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                decorationBox = { innerTextField ->
+                                    OutlinedTextFieldDefaults.DecorationBox(
+                                        value = historyQuery,
+                                        innerTextField = innerTextField,
+                                        enabled = true,
+                                        singleLine = true,
+                                        visualTransformation = VisualTransformation.None,
+                                        interactionSource = searchInteractionSource,
+                                        placeholder = {
+                                            Text(
+                                                text = Localization.get(Localization.Key.SEARCH_ORDERS_PLACEHOLDER, language),
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
+                                        leadingIcon = {
                                             Icon(
-                                                imageVector = Icons.Default.Clear,
-                                                contentDescription = "Clear",
+                                                imageVector = Icons.Default.Search,
+                                                contentDescription = null,
                                                 modifier = Modifier.size(18.dp)
                                             )
-                                        }
-                                    }
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                singleLine = true
+                                        },
+                                        trailingIcon = {
+                                            if (historyQuery.isNotBlank()) {
+                                                IconButton(
+                                                    onClick = { viewModel.setHistoryQuery("") },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Clear,
+                                                        contentDescription = "Clear",
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        container = {
+                                            OutlinedTextFieldDefaults.Container(
+                                                enabled = true,
+                                                isError = false,
+                                                interactionSource = searchInteractionSource,
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = OutlinedTextFieldDefaults.colors()
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
                             )
 
                             Spacer(modifier = Modifier.width(8.dp))
@@ -338,8 +384,10 @@ fun HistoryScreen(
                                 OutlinedButton(
                                     onClick = { showSortMenu = true },
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                                    modifier = Modifier.testTag("sort_menu_btn")
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier
+                                        .height(42.dp)
+                                        .testTag("sort_menu_btn")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Sort,
@@ -643,6 +691,30 @@ fun HistoryScreen(
                                                 .testTag("custom_date_from_input"),
                                             label = { Text(if (language == "bn") "শুরুর তারিখ" else "Start Date", fontSize = 10.sp) },
                                             placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                                            trailingIcon = {
+                                                IconButton(
+                                                    onClick = {
+                                                        showDatePickerDialog(context, customStartDateText) { selected ->
+                                                            customStartDateText = selected
+                                                            val parsedStart = DateTimeUtils.parseDateDdMmYyyy(selected)
+                                                            val parsedEnd = if (customEndDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customEndDateText) else null
+                                                            if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
+                                                                customDateErrorText = "End date cannot be earlier than start date"
+                                                            } else if (parsedStart != null) {
+                                                                customDateErrorText = null
+                                                                viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
+                                                            }
+                                                        }
+                                                    },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CalendarToday,
+                                                        contentDescription = "Select Start Date",
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            },
                                             singleLine = true,
                                             shape = RoundedCornerShape(6.dp)
                                         )
@@ -676,6 +748,30 @@ fun HistoryScreen(
                                                 .testTag("custom_date_to_input"),
                                             label = { Text(if (language == "bn") "শেষ তারিখ (ঐচ্ছিক)" else "End Date (Optional)", fontSize = 10.sp) },
                                             placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                                            trailingIcon = {
+                                                IconButton(
+                                                    onClick = {
+                                                        showDatePickerDialog(context, customEndDateText) { selected ->
+                                                            customEndDateText = selected
+                                                            val parsedStart = if (customStartDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customStartDateText) else null
+                                                            val parsedEnd = DateTimeUtils.parseDateDdMmYyyy(selected)
+                                                            if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
+                                                                customDateErrorText = "End date cannot be earlier than start date"
+                                                            } else if (parsedStart != null) {
+                                                                customDateErrorText = null
+                                                                viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
+                                                            }
+                                                        }
+                                                    },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CalendarToday,
+                                                        contentDescription = "Select End Date",
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            },
                                             singleLine = true,
                                             shape = RoundedCornerShape(6.dp)
                                         )
@@ -726,77 +822,6 @@ fun HistoryScreen(
                                             )
                                         }
                                     }
-                                }
-                            }
-                        }
-
-                        // Specific Order ID & Customer Filter Row (Collapsible)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = { showAdvancedFilters = !showAdvancedFilters },
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FilterList,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = if (showAdvancedFilters) {
-                                        if (language == "bn") "নির্দিষ্ট ফিল্টার লুকান ▲" else "Hide Detailed Filters ▲"
-                                    } else {
-                                        if (language == "bn") "অর্ডার বা কাস্টমার নির্দিষ্ট ফিল্টার ▼" else "Order ID / Customer Filters ▼"
-                                    },
-                                    fontSize = 11.sp
-                                )
-                            }
-
-                            if (historyQuery.isNotBlank() || historyOrderIdFilter.isNotBlank() || historyCustomerFilter.isNotBlank() || dateFilter != DateFilterMode.ALL) {
-                                TextButton(
-                                    onClick = { viewModel.clearAllFilters() },
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = Localization.get(Localization.Key.FILTER_CLEAR_ALL, language),
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-                        }
-
-                        AnimatedVisibility(visible = showAdvancedFilters) {
-                            Column(modifier = Modifier.padding(top = 4.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = historyOrderIdFilter,
-                                        onValueChange = { viewModel.setOrderIdFilter(it) },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("filter_order_id_input"),
-                                        placeholder = { Text("Filter Order ID (#INV)", fontSize = 11.sp) },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    OutlinedTextField(
-                                        value = historyCustomerFilter,
-                                        onValueChange = { viewModel.setCustomerFilter(it) },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("filter_customer_input"),
-                                        placeholder = { Text("Customer / Phone", fontSize = 11.sp) },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
                                 }
                             }
                         }
@@ -1821,12 +1846,45 @@ fun ReceiptDetailsDialog(
     }
 }
 
+fun showDatePickerDialog(
+    context: Context,
+    initialDateText: String,
+    onDateSelected: (String) -> Unit
+) {
+    val cal = Calendar.getInstance()
+    val parsed = DateTimeUtils.parseDateDdMmYyyy(initialDateText)
+    if (parsed != null) {
+        cal.time = parsed
+    }
+    val year = cal.get(Calendar.YEAR)
+    val month = cal.get(Calendar.MONTH)
+    val day = cal.get(Calendar.DAY_OF_MONTH)
+
+    DatePickerDialog(
+        context,
+        { _, selectedYear, selectedMonth, selectedDay ->
+            val formatted = String.format(
+                Locale.US,
+                "%02d-%02d-%04d",
+                selectedDay,
+                selectedMonth + 1,
+                selectedYear
+            )
+            onDateSelected(formatted)
+        },
+        year,
+        month,
+        day
+    ).show()
+}
+
 @Composable
 fun CustomDateRangeDialog(
     language: String,
     onDismiss: () -> Unit,
     onApply: (Long, Long) -> Unit
 ) {
+    val context = LocalContext.current
     var fromDateText by remember { mutableStateOf("") }
     var toDateText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -1847,33 +1905,73 @@ fun CustomDateRangeDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = fromDateText,
-                    onValueChange = {
-                        fromDateText = it
-                        errorMessage = null
-                    },
-                    label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_FROM, language), fontSize = 11.sp) },
-                    placeholder = { Text("dd-MM-yyyy (e.g. 18-11-2025)", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("custom_date_from_input")
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = toDateText,
-                    onValueChange = {
-                        toDateText = it
-                        errorMessage = null
-                    },
-                    label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_TO, language), fontSize = 11.sp) },
-                    placeholder = { Text("dd-MM-yyyy (e.g. 18-11-2025)", fontSize = 11.sp) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("custom_date_to_input")
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = fromDateText,
+                        onValueChange = {
+                            fromDateText = it
+                            errorMessage = null
+                        },
+                        label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_FROM, language), fontSize = 10.sp) },
+                        placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    showDatePickerDialog(context, fromDateText) { selected ->
+                                        fromDateText = selected
+                                        errorMessage = null
+                                    }
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarToday,
+                                    contentDescription = "Select Start Date",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_date_from_input")
+                    )
+
+                    OutlinedTextField(
+                        value = toDateText,
+                        onValueChange = {
+                            toDateText = it
+                            errorMessage = null
+                        },
+                        label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_TO, language), fontSize = 10.sp) },
+                        placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    showDatePickerDialog(context, toDateText) { selected ->
+                                        toDateText = selected
+                                        errorMessage = null
+                                    }
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CalendarToday,
+                                    contentDescription = "Select End Date",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_date_to_input")
+                    )
+                }
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(

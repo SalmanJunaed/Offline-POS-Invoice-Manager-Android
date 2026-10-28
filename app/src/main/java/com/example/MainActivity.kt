@@ -190,14 +190,20 @@ fun PosMainApp(viewModel: PosViewModel) {
             onPrintBluetooth = {
                 val targetInv = selectedInvoiceForReceipt
                 if (targetInv != null) {
-                    viewModel.printInvoiceFromPreview(targetInv)
+                    viewModel.printInvoiceFromPreview(targetInv) {
+                        if (navigateHomeAfterPreview) {
+                            isNewInvoiceOpen = false
+                            viewModel.resetNavigateHomeAfterPreview()
+                            viewModel.refreshHistory()
+                        }
+                    }
                 } else {
                     viewModel.testPrint()
-                }
-                if (navigateHomeAfterPreview) {
-                    isNewInvoiceOpen = false
-                    viewModel.resetNavigateHomeAfterPreview()
-                    viewModel.refreshHistory()
+                    if (navigateHomeAfterPreview) {
+                        isNewInvoiceOpen = false
+                        viewModel.resetNavigateHomeAfterPreview()
+                        viewModel.refreshHistory()
+                    }
                 }
             },
             onSharePdf = {

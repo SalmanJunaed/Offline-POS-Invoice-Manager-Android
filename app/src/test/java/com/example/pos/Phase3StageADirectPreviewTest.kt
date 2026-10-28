@@ -409,4 +409,46 @@ class Phase3StageADirectPreviewTest {
         assertTrue("Receipt preview text must be cleared", vm.receiptPreviewText.value.isEmpty())
         assertTrue("Receipt lines cache must be empty", vm.receiptPopupLines.value.isEmpty())
     }
+
+    @Test
+    fun testDueSettlement_previewOpensWithCloseDetailsFlagAndNormalHistoryPreviewPreserved() = runBlocking {
+        val invoice = insertSampleInvoice(
+            orderId = "INV-DUE-NAV-01",
+            paidAmountBdt = 300L,
+            roundedTotalBdt = 500L,
+            rawTotalPaisa = 50000L
+        )
+        val vm = PosViewModel(app)
+
+        // 1. Normal preview from History does NOT set closeDetailsOnPrintSuccess
+        vm.openInvoicePreview(invoice)
+        var attempts = 0
+        while (!vm.receiptPreviewOpen.value && attempts < 30) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            Thread.sleep(50)
+            attempts++
+        }
+        assertFalse("Normal preview opened from History must have closeDetailsOnPrintSuccess == false", vm.closeDetailsOnPrintSuccess.value)
+        vm.closeReceiptPreview()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // 2. Settle due amount
+        vm.settleInvoiceDue(orderId = invoice.orderId, additionalPaymentBdt = 200L, method = "CASH")
+        var settleAttempts = 0
+        while (!vm.receiptPreviewOpen.value && settleAttempts < 30) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            Thread.sleep(50)
+            settleAttempts++
+        }
+
+        // Preview is opened automatically after settlement
+        assertTrue("Receipt preview must open automatically after due settlement", vm.receiptPreviewOpen.value)
+        assertTrue("closeDetailsOnPrintSuccess flag must be true after due settlement preview", vm.closeDetailsOnPrintSuccess.value)
+
+        // Verify updated invoice data in preview
+        val updatedInv = vm.selectedInvoiceForReceipt.value
+        assertNotNull(updatedInv)
+        assertEquals("Paid amount must be 500", 500L, updatedInv?.paidAmountBdt)
+        assertTrue("Invoice should be marked paid", updatedInv?.isPaid == true)
+    }
 }

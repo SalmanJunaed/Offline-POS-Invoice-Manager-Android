@@ -30,9 +30,12 @@ import com.example.pos.printer.PrinterConnectionState
 import com.example.pos.printer.ThermalReceiptFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -285,6 +288,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _receiptPreviewText = MutableStateFlow("")
     val receiptPreviewText: StateFlow<String> = _receiptPreviewText.asStateFlow()
+
+    private val _closeDetailsDialogEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val closeDetailsDialogEvent: SharedFlow<Unit> = _closeDetailsDialogEvent.asSharedFlow()
+
+    private val _closeDetailsOnPrintSuccess = MutableStateFlow(false)
+    val closeDetailsOnPrintSuccess: StateFlow<Boolean> = _closeDetailsOnPrintSuccess.asStateFlow()
 
     // UI Snackbars / Alerts
     private val _toastMessage = MutableStateFlow<String?>(null)
@@ -876,7 +885,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                         _toastMessage.value = if (isBn) "বকেয়া সফলভাবে পরিশোধ করা হয়েছে।" else "Due settled successfully."
                         refreshHistory()
                         if (openPreviewAfterSettlement) {
-                            openInvoicePreview(result.data)
+                            openInvoicePreview(result.data, closeDetailsOnPrint = true)
                         }
                         onSuccess?.invoke(result.data)
                     }
@@ -1181,7 +1190,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openInvoicePreview(invoice: InvoiceEntity) {
+    fun openInvoicePreview(invoice: InvoiceEntity, closeDetailsOnPrint: Boolean = false) {
+        _closeDetailsOnPrintSuccess.value = closeDetailsOnPrint
         viewModelScope.launch {
             val freshInvoice = repository.getInvoiceById(invoice.orderId) ?: invoice
             val lines = repository.getLinesForOrderDirect(freshInvoice.orderId)
@@ -1228,7 +1238,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         openInvoicePreview(invoice)
     }
 
-    fun printInvoiceFromPreview(targetInvoice: InvoiceEntity? = _selectedInvoiceForReceipt.value) {
+    fun printInvoiceFromPreview(
+        targetInvoice: InvoiceEntity? = _selectedInvoiceForReceipt.value,
+        onSuccess: (() -> Unit)? = null
+    ) {
         val invoice = targetInvoice ?: return
         if (_isPrinting.value) return
         _isPrinting.value = true
@@ -1268,6 +1281,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     val res = BluetoothPrinterManager.print(address, settings?.bluetoothPrinterName, payload)
                     if (res.isSuccess) {
                         _toastMessage.value = if (isBn) "ভাউচার #${invoice.orderId} প্রিন্ট সফল!" else "Receipt printed for #${invoice.orderId}!"
+                        closeReceiptPreview()
+                        if (_closeDetailsOnPrintSuccess.value) {
+                            _closeDetailsOnPrintSuccess.value = false
+                            _closeDetailsDialogEvent.tryEmit(Unit)
+                        }
+                        onSuccess?.invoke()
                     } else {
                         _toastMessage.value = if (isBn) "প্রিন্টার ত্রুটি: ${res.exceptionOrNull()?.message}" else "Printer error: ${res.exceptionOrNull()?.message}"
                     }
