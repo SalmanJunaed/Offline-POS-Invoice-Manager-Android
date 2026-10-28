@@ -347,6 +347,16 @@ class PosRepository(
             history.updateInvoiceCustomerAndNote(orderId, customerInfo, footerNote)
         }
 
+    suspend fun settleInvoiceDue(orderId: String, additionalPaymentBdt: Long, method: String = "CASH"): PosResult<InvoiceEntity> =
+        withContext(Dispatchers.IO) {
+            history.settleInvoiceDue(orderId, additionalPaymentBdt, method)
+        }
+
+    suspend fun getInvoiceById(orderId: String): InvoiceEntity? =
+        withContext(Dispatchers.IO) {
+            invoiceDao.getInvoiceById(orderId)
+        }
+
     suspend fun saveOrder(
         invoice: InvoiceEntity,
         lines: List<InvoiceLineEntity>,

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -1066,8 +1067,8 @@ fun HistoryScreen(
                         language = language,
                         onToggleExpand = { viewModel.toggleOrderExpansion(invoice.orderId) },
                         onSelectForDetails = {
-                            // Phase 3 Stage A: Direct saved voucher preview on card tap
-                            viewModel.openInvoicePreview(invoice)
+                            selectedInvoiceForDetails = invoice
+                            viewModel.fetchLinesForOrder(invoice.orderId)
                         },
                         onViewReceipt = { viewModel.openInvoicePreview(invoice) },
                         onSharePdf = { viewModel.generateAndShareInvoicePdf(context, invoice, cachedLines) },
@@ -1182,8 +1183,11 @@ fun HistoryScreen(
     }
 
     // Dedicated Invoice Details Dialog (Phase 3)
-    if (selectedInvoiceForDetails != null) {
-        val target = selectedInvoiceForDetails!!
+    val detailsInvoice = selectedInvoiceForDetails?.let { current ->
+        invoices.find { it.orderId == current.orderId } ?: current
+    }
+    if (detailsInvoice != null) {
+        val target = detailsInvoice
         val cachedLines = orderLinesCache[target.orderId] ?: (if (expandedOrderId == target.orderId) expandedLines else emptyList())
         InvoiceDetailsDialog(
             invoice = target,
@@ -1192,7 +1196,6 @@ fun HistoryScreen(
             onDismiss = { selectedInvoiceForDetails = null },
             onPreviewPrint = {
                 viewModel.openInvoicePreview(target)
-                selectedInvoiceForDetails = null
             },
             onSharePdf = {
                 viewModel.generateAndShareInvoicePdf(context, target, cachedLines)
@@ -1206,6 +1209,11 @@ fun HistoryScreen(
                 val toDel = target
                 selectedInvoiceForDetails = null
                 invoiceToDelete = toDel
+            },
+            onSettleDue = { amountToPay ->
+                viewModel.settleInvoiceDue(target.orderId, amountToPay) { updated ->
+                    selectedInvoiceForDetails = updated
+                }
             }
         )
     }
@@ -2005,12 +2013,17 @@ fun InvoiceDetailsDialog(
     onPreviewPrint: () -> Unit,
     onSharePdf: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onSettleDue: (Long) -> Unit = {}
 ) {
     val isBn = language == "bn"
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
     val formattedDate = remember(invoice.dateTime) { dateFormat.format(Date(invoice.dateTime)) }
     val dueAmountBdt = invoice.roundedTotalBdt - invoice.paidAmountBdt
+
+    var showSettleDueDialog by remember { mutableStateOf(false) }
+    var settleAmountInput by remember(invoice.orderId, dueAmountBdt) { mutableStateOf(dueAmountBdt.toString()) }
+    var settleError by remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -2277,7 +2290,7 @@ fun InvoiceDetailsDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 3. Delete Button (Requires confirmation dialog)
+                // 4. Delete Button (Requires confirmation dialog)
                 OutlinedButton(
                     onClick = onDelete,
                     modifier = Modifier
@@ -2291,8 +2304,113 @@ fun InvoiceDetailsDialog(
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(Localization.get(Localization.Key.BTN_DELETE_TRANSACTION, language), fontSize = 12.sp)
                 }
+
+                // 5. Outstanding Due Settlement (RED button with readable contrasting text)
+                if (dueAmountBdt > 0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            settleAmountInput = dueAmountBdt.toString()
+                            settleError = null
+                            showSettleDueDialog = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("details_due_payment_btn"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isBn) "বকেয়া পরিশোধ" else "Settle Due",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
             }
         }
+    }
+
+    if (showSettleDueDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showSettleDueDialog = false
+                settleError = null
+            },
+            modifier = Modifier.testTag("due_settlement_dialog"),
+            title = {
+                Text(
+                    text = if (isBn) "বকেয়া পরিশোধ #${invoice.orderId}" else "Settle Due #${invoice.orderId}",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = if (isBn) "সর্বমোট: ${invoice.roundedTotalBdt} ৳ | পরিশোধিত: ${invoice.paidAmountBdt} ৳" else "Total: ${invoice.roundedTotalBdt} ৳ | Paid: ${invoice.paidAmountBdt} ৳",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isBn) "বর্তমান বকেয়া: $dueAmountBdt ৳" else "Remaining Due: $dueAmountBdt ৳",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = settleAmountInput,
+                        onValueChange = {
+                            settleAmountInput = it
+                            settleError = null
+                        },
+                        label = { Text(if (isBn) "পরিশোধের পরিমাণ (৳)" else "Payment Amount (৳)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = settleError != null,
+                        supportingText = settleError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("due_settlement_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val parsed = settleAmountInput.trim().toLongOrNull()
+                        if (parsed == null || parsed <= 0) {
+                            settleError = if (isBn) "সঠিক পরিমাণ লিখুন" else "Enter a valid positive amount"
+                        } else if (parsed > dueAmountBdt) {
+                            settleError = if (isBn) "পরিমাণ বকেয়ার ($dueAmountBdt ৳) চেয়ে বেশি হতে পারে না" else "Amount cannot exceed due ($dueAmountBdt ৳)"
+                        } else {
+                            showSettleDueDialog = false
+                            settleError = null
+                            onSettleDue(parsed)
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_due_settlement_btn"),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(if (isBn) "পরিশোধ নিশ্চিত করুন" else "Confirm Payment")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showSettleDueDialog = false
+                        settleError = null
+                    },
+                    modifier = Modifier.testTag("cancel_due_settlement_btn")
+                ) {
+                    Text(Localization.get(Localization.Key.CANCEL, language))
+                }
+            }
+        )
     }
 }
 

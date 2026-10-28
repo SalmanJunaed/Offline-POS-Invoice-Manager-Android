@@ -113,14 +113,14 @@ class Phase3StageADirectPreviewTest {
     }
 
     @Test
-    fun testDirectSavedVoucherPreview_opensImmediatelyOnCardTap() = runBlocking {
-        val invoice = insertSampleInvoice("INV-DIRECT-01")
+    fun testInvoiceDetailsPreviewPrint_opensReceiptPreviewWithAccurateData() = runBlocking {
+        val invoice = insertSampleInvoice("INV-DETAILS-01")
         val vm = PosViewModel(app)
 
         // Verify initial state
         assertFalse("Receipt preview should initially be closed", vm.receiptPreviewOpen.value)
 
-        // Simulate tapping saved invoice card in Sales Home (direct preview navigation)
+        // From Intermediate Invoice Details Page, user clicks "প্রিভিউ ও প্রিন্ট"
         vm.openInvoicePreview(invoice)
 
         var attempts = 0
@@ -130,8 +130,8 @@ class Phase3StageADirectPreviewTest {
             attempts++
         }
 
-        // 1. Direct preview opened without intermediary screen
-        assertTrue("Receipt preview must open immediately on card tap", vm.receiptPreviewOpen.value)
+        // 1. Receipt preview opened
+        assertTrue("Receipt preview must open from details page preview & print action", vm.receiptPreviewOpen.value)
         assertEquals("Selected invoice for preview must match tapped invoice", invoice.orderId, vm.selectedInvoiceForReceipt.value?.orderId)
 
         // 2. Contains invoice ID, customer info, itemized line, totals, and due
@@ -141,6 +141,122 @@ class Phase3StageADirectPreviewTest {
         assertTrue("Preview must contain item name", previewText.contains("অকটেন"))
         assertTrue("Preview lines cache must be loaded", vm.receiptPopupLines.value.isNotEmpty())
         assertEquals("Line item name must match", "অকটেন", vm.receiptPopupLines.value.first().itemName)
+    }
+
+    @Test
+    fun testOutstandingDueSettlement_fullSettlementUpdatesDatabaseAndPaymentRecords() = runBlocking {
+        // Invoice with 500 total, 400 paid, 100 due
+        val invoice = insertSampleInvoice(
+            orderId = "INV-DUE-FULL-01",
+            paidAmountBdt = 400L,
+            roundedTotalBdt = 500L,
+            rawTotalPaisa = 50000L
+        )
+        val vm = PosViewModel(app)
+
+        var settledInvoice: InvoiceEntity? = null
+        vm.settleInvoiceDue("INV-DUE-FULL-01", 100L) { updated ->
+            settledInvoice = updated
+        }
+
+        var attempts = 0
+        while (settledInvoice == null && attempts < 30) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            Thread.sleep(50)
+            attempts++
+        }
+
+        assertNotNull("Settlement callback must return updated invoice", settledInvoice)
+        assertEquals("Paid amount must be updated to 500", 500L, settledInvoice!!.paidAmountBdt)
+        assertTrue("Invoice must now be marked as paid", settledInvoice!!.isPaid)
+
+        // Verify database persistence
+        val dbInvoice = db.invoiceDao().getInvoiceById("INV-DUE-FULL-01")
+        assertNotNull(dbInvoice)
+        assertEquals(500L, dbInvoice!!.paidAmountBdt)
+        assertTrue(dbInvoice.isPaid)
+
+        // Verify payment record inserted
+        val payments = db.paymentDao().getPaymentsForOrder("INV-DUE-FULL-01").first()
+        assertEquals(2, payments.size) // 1 initial + 1 settlement
+        val settlementPayment = payments.find { it.amountPaidPaisa == 10000L }
+        assertNotNull("Settlement payment record must exist", settlementPayment)
+        assertEquals("CASH", settlementPayment!!.paymentMethod)
+
+        // Verify voucher preview was automatically opened with updated data
+        var previewAttempts = 0
+        while (!vm.receiptPreviewOpen.value && previewAttempts < 30) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            Thread.sleep(50)
+            previewAttempts++
+        }
+        assertTrue("Receipt preview must open automatically after successful settlement", vm.receiptPreviewOpen.value)
+        assertEquals("Preview invoice must match settled invoice", "INV-DUE-FULL-01", vm.selectedInvoiceForReceipt.value?.orderId)
+        assertEquals(500L, vm.selectedInvoiceForReceipt.value?.paidAmountBdt)
+        assertTrue("Preview invoice must show Paid status", vm.selectedInvoiceForReceipt.value?.isPaid == true)
+        val previewText = vm.receiptPreviewText.value
+        assertTrue("Preview text must contain Order ID", previewText.contains("INV-DUE-FULL-01"))
+    }
+
+    @Test
+    fun testOutstandingDueSettlement_failedValidationDoesNotOpenPreview() = runBlocking {
+        val invoice = insertSampleInvoice(
+            orderId = "INV-DUE-FAIL-01",
+            paidAmountBdt = 400L,
+            roundedTotalBdt = 500L,
+            rawTotalPaisa = 50000L
+        )
+        val vm = PosViewModel(app)
+
+        assertFalse("Receipt preview should initially be closed", vm.receiptPreviewOpen.value)
+
+        // Attempt invalid settlement exceeding remaining due (200 > 100)
+        var callbackTriggered = false
+        vm.settleInvoiceDue("INV-DUE-FAIL-01", 200L) {
+            callbackTriggered = true
+        }
+
+        testDispatcher.scheduler.advanceUntilIdle()
+        Thread.sleep(100)
+
+        assertFalse("Callback must not be invoked on validation failure", callbackTriggered)
+        assertFalse("Receipt preview must not open when settlement fails", vm.receiptPreviewOpen.value)
+    }
+
+    @Test
+    fun testOutstandingDueSettlement_partialSettlementLeavesRemainingDue() = runBlocking {
+        // Invoice with 500 total, 200 paid, 300 due
+        val invoice = insertSampleInvoice(
+            orderId = "INV-DUE-PART-01",
+            paidAmountBdt = 200L,
+            roundedTotalBdt = 500L,
+            rawTotalPaisa = 50000L
+        )
+        val vm = PosViewModel(app)
+
+        var settledInvoice: InvoiceEntity? = null
+        vm.settleInvoiceDue("INV-DUE-PART-01", 150L) { updated ->
+            settledInvoice = updated
+        }
+
+        var attempts = 0
+        while (settledInvoice == null && attempts < 30) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            Thread.sleep(50)
+            attempts++
+        }
+
+        assertNotNull("Settlement callback must return updated invoice", settledInvoice)
+        assertEquals("Paid amount must be 350", 350L, settledInvoice!!.paidAmountBdt)
+        assertFalse("Invoice must still have positive due (not paid)", settledInvoice!!.isPaid)
+        val remainingDue = settledInvoice!!.roundedTotalBdt - settledInvoice!!.paidAmountBdt
+        assertEquals("Remaining due must be 150", 150L, remainingDue)
+
+        // Verify database
+        val dbInvoice = db.invoiceDao().getInvoiceById("INV-DUE-PART-01")
+        assertNotNull(dbInvoice)
+        assertEquals(350L, dbInvoice!!.paidAmountBdt)
+        assertFalse(dbInvoice.isPaid)
     }
 
     @Test

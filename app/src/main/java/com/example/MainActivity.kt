@@ -208,18 +208,6 @@ fun PosMainApp(viewModel: PosViewModel) {
                         lines = viewModel.receiptPopupLines.value
                     )
                 }
-            },
-            onEdit = {
-                selectedInvoiceForReceipt?.let { inv ->
-                    viewModel.closeReceiptPreview()
-                    viewModel.openEditInvoice(inv)
-                }
-            },
-            onDelete = {
-                selectedInvoiceForReceipt?.let { inv ->
-                    viewModel.closeReceiptPreview()
-                    viewModel.openDeleteInvoice(inv)
-                }
             }
         )
     }

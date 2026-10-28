@@ -1,10 +1,13 @@
 package com.example.pos.data.repository
 
+import com.example.pos.core.error.PosError
+import com.example.pos.core.error.PosResult
 import com.example.pos.data.db.AggregatedSalesResult
 import com.example.pos.data.db.InvoiceDao
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.ItemSalesSummary
+import com.example.pos.data.db.PaymentRecordEntity
 import kotlinx.coroutines.flow.Flow
 
 enum class HistorySortOption {
@@ -111,6 +114,8 @@ interface HistoryRepository {
     suspend fun getMatchingOrderIds(query: String, limit: Int = 8): List<String>
 
     suspend fun updateInvoiceCustomerAndNote(orderId: String, customerInfo: String, footerNote: String): Int
+
+    suspend fun settleInvoiceDue(orderId: String, additionalPaymentBdt: Long, method: String = "CASH"): PosResult<InvoiceEntity>
 
     suspend fun deleteOrder(orderId: String)
 
@@ -239,6 +244,35 @@ class HistoryRepositoryImpl(private val invoiceDao: InvoiceDao) : HistoryReposit
 
     override suspend fun updateInvoiceCustomerAndNote(orderId: String, customerInfo: String, footerNote: String): Int =
         invoiceDao.updateInvoiceCustomerAndNote(orderId, customerInfo, footerNote)
+
+    override suspend fun settleInvoiceDue(
+        orderId: String,
+        additionalPaymentBdt: Long,
+        method: String
+    ): PosResult<InvoiceEntity> {
+        if (additionalPaymentBdt <= 0) {
+            return PosResult.Error(PosError.ValidationError("Settlement amount must be positive"))
+        }
+        val invoice = invoiceDao.getInvoiceById(orderId)
+            ?: return PosResult.Error(PosError.DatabaseError("Invoice not found"))
+        val remainingDue = invoice.roundedTotalBdt - invoice.paidAmountBdt
+        if (remainingDue <= 0) {
+            return PosResult.Error(PosError.ValidationError("Invoice is already fully paid"))
+        }
+        if (additionalPaymentBdt > remainingDue) {
+            return PosResult.Error(PosError.ValidationError("Settlement amount exceeds outstanding due of $remainingDue ৳"))
+        }
+        val record = PaymentRecordEntity(
+            orderId = orderId,
+            paymentMethod = method,
+            amountPaidPaisa = additionalPaymentBdt * 100L,
+            transactionRef = "SETTLE-$orderId-${System.currentTimeMillis()}",
+            createdAt = System.currentTimeMillis()
+        )
+        val updated = invoiceDao.settleInvoiceDueAtomic(orderId, additionalPaymentBdt, record)
+            ?: return PosResult.Error(PosError.DatabaseError("Failed to update invoice payment"))
+        return PosResult.Success(updated)
+    }
 
     override suspend fun deleteOrder(orderId: String) {
         invoiceDao.deleteFullOrder(orderId)

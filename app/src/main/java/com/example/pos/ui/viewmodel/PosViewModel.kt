@@ -861,6 +861,36 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun settleInvoiceDue(
+        orderId: String,
+        additionalPaymentBdt: Long,
+        method: String = "CASH",
+        openPreviewAfterSettlement: Boolean = true,
+        onSuccess: ((InvoiceEntity) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            try {
+                when (val result = repository.settleInvoiceDue(orderId, additionalPaymentBdt, method)) {
+                    is PosResult.Success -> {
+                        val isBn = language.value == "bn"
+                        _toastMessage.value = if (isBn) "বকেয়া সফলভাবে পরিশোধ করা হয়েছে।" else "Due settled successfully."
+                        refreshHistory()
+                        if (openPreviewAfterSettlement) {
+                            openInvoicePreview(result.data)
+                        }
+                        onSuccess?.invoke(result.data)
+                    }
+                    is PosResult.Error -> {
+                        val isBn = language.value == "bn"
+                        _toastMessage.value = if (isBn) "বকেয়া পরিশোধ ব্যর্থ হয়েছে: ${result.error.message}" else "Settlement failed: ${result.error.message}"
+                    }
+                }
+            } catch (e: Exception) {
+                _toastMessage.value = "Payment settlement failed: ${e.message}"
+            }
+        }
+    }
+
     fun setCustomerFilter(customer: String) {
         _historyCustomerFilter.value = customer
         _currentPage.value = 0
@@ -1153,21 +1183,22 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openInvoicePreview(invoice: InvoiceEntity) {
         viewModelScope.launch {
-            val lines = repository.getLinesForOrderDirect(invoice.orderId)
+            val freshInvoice = repository.getInvoiceById(invoice.orderId) ?: invoice
+            val lines = repository.getLinesForOrderDirect(freshInvoice.orderId)
             val header = companyHeader.value
             val settings = appSettings.value
             val paperSize = settings?.paperSize ?: "58mm"
             val text = ThermalReceiptFormatter.generateReceiptText(
                 header = header,
-                invoice = invoice,
+                invoice = freshInvoice,
                 lines = lines,
                 paperSize = paperSize,
                 footerLine1 = settings?.footerNoteLine1 ?: "",
                 footerLine2 = settings?.footerNoteLine2 ?: "",
-                isFullPaid = invoice.isPaid,
+                isFullPaid = freshInvoice.isPaid,
                 lang = _language.value
             )
-            _selectedInvoiceForReceipt.value = invoice
+            _selectedInvoiceForReceipt.value = freshInvoice
             _receiptPopupLines.value = lines
             _receiptPreviewText.value = text
             _receiptPreviewOpen.value = true

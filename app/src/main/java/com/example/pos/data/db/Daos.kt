@@ -544,6 +544,28 @@ interface InvoiceDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
+    @Query("UPDATE invoices SET paid_amount_bdt = :newPaidBdt, is_paid = :isPaid, updated_at = :updatedAt WHERE order_id = :orderId")
+    suspend fun updateInvoicePayment(
+        orderId: String,
+        newPaidBdt: Long,
+        isPaid: Boolean,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
+    @Transaction
+    suspend fun settleInvoiceDueAtomic(
+        orderId: String,
+        additionalPaymentBdt: Long,
+        paymentRecord: PaymentRecordEntity
+    ): InvoiceEntity? {
+        val invoice = getInvoiceById(orderId) ?: return null
+        val newPaid = invoice.paidAmountBdt + additionalPaymentBdt
+        val isPaid = newPaid >= invoice.roundedTotalBdt
+        insertPayment(paymentRecord)
+        updateInvoicePayment(orderId, newPaid, isPaid, System.currentTimeMillis())
+        return getInvoiceById(orderId)
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertInvoice(invoice: InvoiceEntity)
 
