@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Layout
@@ -64,6 +65,23 @@ object ThermalReceiptFormatter {
         } else {
             Result.success(Unit)
         }
+    }
+
+    /**
+     * Splits company name by newlines (preserving 3-line headers like
+     * মেসার্স রাকিব ফিলিং স্টেশন / এন্ড / এল পি জি অটোগ্যাস ফিলিং স্টেশন).
+     * Handles \r\n, \r, \n, and escaped \\n safely without merging lines.
+     */
+    fun splitCompanyLines(rawName: String?, defaultName: String = "POS STATION"): List<String> {
+        val name = rawName?.trim()?.ifBlank { null } ?: defaultName
+        val normalized = name
+            .replace("\\r\\n", "\n")
+            .replace("\\n", "\n")
+            .replace("\\r", "\n")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        val lines = normalized.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        return if (lines.isNotEmpty()) lines else listOf(defaultName)
     }
 
     /**
@@ -155,11 +173,9 @@ object ThermalReceiptFormatter {
         val fullPaidText = if (isBn) "সম্পূর্ণ পরিশোধিত ✓" else "FULL PAID ✓"
 
         // 1. Company Name (Preserves line breaks and center-aligns every line dynamically)
-        val rawCompanyName = header?.companyName?.ifBlank { "POS STATION" } ?: "POS STATION"
-        rawCompanyName.lines().forEach { line ->
-            if (line.isNotBlank()) {
-                sb.appendLine(centerText(line.trim(), width))
-            }
+        val companyLines = splitCompanyLines(header?.companyName, "POS STATION")
+        companyLines.forEach { line ->
+            sb.appendLine(centerText(line, width))
         }
 
         // 2. Branch info & Address (Centered)
@@ -258,6 +274,8 @@ object ThermalReceiptFormatter {
         } else {
             sb.appendLine(format58mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
             sb.appendLine(format58mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
+            val dueStamp = if (isBn) "*** বকেয়া / DUE ✕ ***" else "*** DUE / UNPAID ✕ ***"
+            sb.appendLine(centerText(dueStamp, width))
         }
 
         // 17. Footer notes (Centered)
@@ -307,11 +325,9 @@ object ThermalReceiptFormatter {
         val fullPaidText = if (isBn) "সম্পূর্ণ পরিশোধিত ✓" else "FULL PAID ✓"
 
         // 1. Company Name (Preserves line breaks and center-aligns every line dynamically)
-        val rawCompanyName = header?.companyName?.ifBlank { "POS & INVOICE STATION" } ?: "POS & INVOICE STATION"
-        rawCompanyName.lines().forEach { line ->
-            if (line.isNotBlank()) {
-                sb.appendLine(centerText(line.trim(), width))
-            }
+        val companyLines = splitCompanyLines(header?.companyName, "POS & INVOICE STATION")
+        companyLines.forEach { line ->
+            sb.appendLine(centerText(line, width))
         }
 
         // 2. Branch & Address (Centered)
@@ -420,6 +436,8 @@ object ThermalReceiptFormatter {
         } else {
             sb.appendLine(format80mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
             sb.appendLine(format80mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
+            val dueStamp = if (isBn) "*** বকেয়া / DUE ✕ ***" else "*** DUE / UNPAID ✕ ***"
+            sb.appendLine(centerText(dueStamp, width))
         }
 
         // 17. Footer notes (Centered)
@@ -471,53 +489,57 @@ object ThermalReceiptFormatter {
         val is80mm = paperSize.contains("80")
         val width = if (is80mm) WIDTH_80MM else WIDTH_58MM
         val widthDots = if (is80mm) DOTS_80MM else DOTS_58MM
-        val maxLogoDots = if (is80mm) 384 else 256
+        val maxLogoDots = if (is80mm) 216 else 160
 
         val out = ByteArrayOutputStream()
 
         // 1. Initialize
         out.write(CMD_INIT)
 
-        // 2. Logo (Raster Bitmap if available)
+        // 2. Logo / Placeholder (Balanced size, centered across paper width)
         if (logoBitmap != null) {
-            val rasterLogo = bitmapToEscPosRaster(logoBitmap, maxLogoDots)
+            val rasterLogo = renderLogoToRaster(logoBitmap, widthDots, maxLogoDots)
             if (rasterLogo != null && rasterLogo.isNotEmpty()) {
                 out.write(CMD_ALIGN_CENTER)
                 out.write(rasterLogo)
+                out.write(CMD_FEED_lines(1))
+            }
+        } else {
+            val placeholder = renderLogoPlaceholderRaster(widthDots, is80mm)
+            if (placeholder != null && placeholder.isNotEmpty()) {
+                out.write(CMD_ALIGN_CENTER)
+                out.write(placeholder)
                 out.write(CMD_FEED_lines(1))
             }
         }
 
         // 3. Company Header (Centered, Bold, 3x Magnification)
         out.write(CMD_ALIGN_CENTER)
-        val rawCompanyName = header?.companyName?.ifBlank { "POS STATION" } ?: "POS STATION"
-        if (containsBangla(rawCompanyName)) {
-            val headerTextSize = if (is80mm) 38f else 32f
-            rawCompanyName.lines().forEach { line ->
-                if (line.isNotBlank()) {
-                    val raster = renderTextToRaster(
-                        text = line.trim(),
-                        widthDots = widthDots,
-                        textSizePx = headerTextSize,
-                        isBold = true,
-                        alignment = Layout.Alignment.ALIGN_CENTER
-                    )
-                    if (raster != null) {
-                        out.write(raster)
-                    } else {
-                        out.write(line.trim().toByteArray(Charsets.UTF_8))
-                        out.write(0x0A)
-                    }
+        val companyLines = splitCompanyLines(header?.companyName, if (is80mm) "POS & INVOICE STATION" else "POS STATION")
+        val hasBangla = companyLines.any { containsBangla(it) }
+        if (hasBangla) {
+            val headerTextSize = if (is80mm) 36f else 30f
+            companyLines.forEach { line ->
+                val raster = renderTextToRaster(
+                    text = line,
+                    widthDots = widthDots,
+                    textSizePx = headerTextSize,
+                    isBold = true,
+                    alignment = Layout.Alignment.ALIGN_CENTER
+                )
+                if (raster != null) {
+                    out.write(raster)
+                } else {
+                    out.write(line.toByteArray(Charsets.UTF_8))
+                    out.write(0x0A)
                 }
             }
         } else {
             out.write(CMD_BOLD_ON)
             out.write(CMD_TEXT_TRIPLE_SIZE)
-            rawCompanyName.lines().forEach { line ->
-                if (line.isNotBlank()) {
-                    out.write(line.trim().toByteArray(Charsets.UTF_8))
-                    out.write(0x0A)
-                }
+            companyLines.forEach { line ->
+                out.write(line.toByteArray(Charsets.UTF_8))
+                out.write(0x0A)
             }
             out.write(CMD_TEXT_NORMAL)
             out.write(CMD_BOLD_OFF)
@@ -789,7 +811,12 @@ object ThermalReceiptFormatter {
         val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
 
         if (isFullPaid || dueAmountBdt <= 0L) {
-            val raster = renderTextToRaster(
+            val raster = renderStatusStampRaster(
+                text = fullPaidText,
+                widthDots = widthDots,
+                isPaid = true,
+                is80mm = is80mm
+            ) ?: renderTextToRaster(
                 text = fullPaidText,
                 widthDots = widthDots,
                 textSizePx = 24f,
@@ -827,6 +854,23 @@ object ThermalReceiptFormatter {
                 val rasterDue = render58mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
                     ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
                 if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
+            }
+
+            // Visible DUE Stamp (Solid inverted high-contrast black box with white text)
+            val dueStampText = if (isBn) "বকেয়া / DUE ✕" else "DUE / UNPAID ✕"
+            val rasterDueStamp = renderStatusStampRaster(
+                text = dueStampText,
+                widthDots = widthDots,
+                isPaid = false,
+                is80mm = is80mm
+            )
+            if (rasterDueStamp != null) {
+                out.write(rasterDueStamp)
+            } else {
+                out.write(CMD_ALIGN_CENTER)
+                out.write(CMD_BOLD_ON)
+                out.write("*** $dueStampText ***\n".toByteArray(Charsets.UTF_8))
+                out.write(CMD_BOLD_OFF)
             }
         }
 
@@ -969,17 +1013,23 @@ object ThermalReceiptFormatter {
 
         out.write(CMD_BOLD_ON)
         val name = companyName ?: "POS Station"
-        if (containsBangla(name)) {
-            val raster = renderTextToRaster(
-                text = name,
-                widthDots = widthDots,
-                textSizePx = 28f,
-                isBold = true,
-                alignment = Layout.Alignment.ALIGN_CENTER
-            )
-            raster?.let { out.write(it) }
+        val testCompanyLines = splitCompanyLines(name, "POS Station")
+        if (testCompanyLines.any { containsBangla(it) }) {
+            val textSize = if (is80mm) 32f else 26f
+            testCompanyLines.forEach { line ->
+                val raster = renderTextToRaster(
+                    text = line,
+                    widthDots = widthDots,
+                    textSizePx = textSize,
+                    isBold = true,
+                    alignment = Layout.Alignment.ALIGN_CENTER
+                )
+                raster?.let { out.write(it) }
+            }
         } else {
-            out.write("$name\n".toByteArray(Charsets.UTF_8))
+            testCompanyLines.forEach { line ->
+                out.write("$line\n".toByteArray(Charsets.UTF_8))
+            }
         }
         out.write(CMD_BOLD_OFF)
 
@@ -1017,7 +1067,9 @@ object ThermalReceiptFormatter {
             appendLine(sep)
             appendLine(centerText("*** TEST PRINT SLIP ***", width))
             appendLine(sep)
-            appendLine(centerText(companyName ?: "POS Station", width))
+            splitCompanyLines(companyName, "POS Station").forEach { line ->
+                appendLine(centerText(line, width))
+            }
             appendLine("Paper Size : ${if (paperSize.contains("80")) "80mm (48 cols)" else "58mm (32 cols)"}")
             appendLine("Auto Cutter: ${if (autoCutter) "ON" else "OFF"}")
             appendLine("Date/Time  : ${SimpleDateFormat("dd-MMM-yyyy hh:mm:ss a", Locale.US).format(Date())}")
@@ -1026,6 +1078,149 @@ object ThermalReceiptFormatter {
             appendLine(centerText("Thermal Printing Ready!", width))
             appendLine(sep)
         }.toString()
+    }
+
+    /**
+     * Renders a logo bitmap centered across the entire paper dot width (widthDots).
+     * Centering on a full-width white canvas ensures consistent center-alignment
+     * on all ESC/POS thermal printers regardless of firmware-level raster alignment support.
+     */
+    fun renderLogoToRaster(source: Bitmap, widthDots: Int, maxLogoSizeDots: Int): ByteArray? {
+        return try {
+            val width = source.width
+            val height = source.height
+            if (width <= 0 || height <= 0) return null
+
+            val scale = minOf(
+                maxLogoSizeDots.toFloat() / width.toFloat(),
+                maxLogoSizeDots.toFloat() / height.toFloat(),
+                1.0f
+            )
+            val targetWidth = (width * scale).toInt().coerceAtLeast(1)
+            val targetHeight = (height * scale).toInt().coerceAtLeast(1)
+            val scaled = Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
+
+            val fullWidthBitmap = Bitmap.createBitmap(widthDots, targetHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(fullWidthBitmap)
+            canvas.drawColor(Color.WHITE)
+            val left = ((widthDots - targetWidth) / 2f).coerceAtLeast(0f)
+            canvas.drawBitmap(scaled, left, 0f, null)
+
+            bitmapToEscPosRaster(fullWidthBitmap, widthDots)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Renders a reserved logo placeholder area with a neat border and "LOGO" text,
+     * centered across widthDots when no custom company logo is configured.
+     */
+    fun renderLogoPlaceholderRaster(widthDots: Int, is80mm: Boolean): ByteArray? {
+        return try {
+            val boxWidth = if (is80mm) 120 else 96
+            val boxHeight = if (is80mm) 48 else 40
+            val bitmap = Bitmap.createBitmap(widthDots, boxHeight + 4, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.WHITE)
+
+            val left = ((widthDots - boxWidth) / 2f).coerceAtLeast(0f)
+            val top = 2f
+            val right = left + boxWidth
+            val bottom = top + boxHeight
+
+            // Border
+            val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+            }
+            val rect = RectF(left, top, right, bottom)
+            canvas.drawRoundRect(rect, 6f, 6f, strokePaint)
+
+            // Centered "LOGO" text
+            val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textSize = if (is80mm) 18f else 15f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            val fontMetrics = textPaint.fontMetrics
+            val baseline = (top + bottom - fontMetrics.top - fontMetrics.bottom) / 2f
+            canvas.drawText("LOGO", left + (boxWidth / 2f), baseline, textPaint)
+
+            bitmapToEscPosRaster(bitmap, widthDots)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Renders a monochrome status stamp (PAID or DUE) centered across widthDots.
+     * PAID: Clear bordered box with checkmark.
+     * DUE: Inverted high-contrast black box with bold white text.
+     * Guarantees distinct monochrome appearance on all standard thermal paper.
+     */
+    fun renderStatusStampRaster(
+        text: String,
+        widthDots: Int,
+        isPaid: Boolean,
+        is80mm: Boolean
+    ): ByteArray? {
+        return try {
+            val boxWidth = if (is80mm) 280 else 220
+            val boxHeight = if (is80mm) 48 else 40
+            val bitmap = Bitmap.createBitmap(widthDots, boxHeight + 8, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.WHITE)
+
+            val left = ((widthDots - boxWidth) / 2f).coerceAtLeast(0f)
+            val top = 4f
+            val right = left + boxWidth
+            val bottom = top + boxHeight
+            val rect = RectF(left, top, right, bottom)
+
+            if (isPaid) {
+                // Clear bordered box
+                val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                }
+                canvas.drawRoundRect(rect, 6f, 6f, strokePaint)
+
+                val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    textSize = if (is80mm) 20f else 16f
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textAlign = Paint.Align.CENTER
+                }
+                val fontMetrics = textPaint.fontMetrics
+                val baseline = (top + bottom - fontMetrics.top - fontMetrics.bottom) / 2f
+                canvas.drawText(text, left + (boxWidth / 2f), baseline, textPaint)
+            } else {
+                // Inverted solid black box with bold white text
+                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(rect, 6f, 6f, fillPaint)
+
+                val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textSize = if (is80mm) 20f else 16f
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textAlign = Paint.Align.CENTER
+                }
+                val fontMetrics = textPaint.fontMetrics
+                val baseline = (top + bottom - fontMetrics.top - fontMetrics.bottom) / 2f
+                canvas.drawText(text, left + (boxWidth / 2f), baseline, textPaint)
+            }
+
+            bitmapToEscPosRaster(bitmap, widthDots)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**
@@ -1117,10 +1312,15 @@ object ThermalReceiptFormatter {
         if (trimmed.isEmpty()) return null
 
         return try {
+            var currentTextSize = textSizePx
             val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.BLACK
-                textSize = textSizePx
+                textSize = currentTextSize
                 typeface = if (isBold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            }
+            while (currentTextSize > 18f && textPaint.measureText(trimmed) > widthDots - 8) {
+                currentTextSize -= 1f
+                textPaint.textSize = currentTextSize
             }
 
             val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

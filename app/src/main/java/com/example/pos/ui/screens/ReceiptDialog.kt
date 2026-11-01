@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -40,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -82,8 +85,11 @@ fun ReceiptPreviewDialog(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    // Exact 100 x 100 px square reserved area
-    val logoSizeDp = with(density) { 100.toDp() }
+    // Balanced 48 x 48 dp square reserved area
+    val logoSizeDp = 48.dp
+    val isLogoConfigured = remember(logoUri, context) {
+        CompanyLogoManager.hasConfiguredLogo(context, logoUri)
+    }
 
     val is80mm = (receiptText.lines().firstOrNull()?.length ?: 32) >= 40
     val receiptFontSize = if (is80mm) 9.sp else 12.sp
@@ -148,20 +154,33 @@ fun ReceiptPreviewDialog(
                     ) {
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        // Logo: Always square 100 x 100 px, centered, aspect-ratio preserved, no "[Logo]" text
+                        // Logo / Placeholder: Balanced size (48x48 dp), centered, reserved area
                         Box(
                             modifier = Modifier
                                 .size(logoSizeDp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(Color(0xFFF1EDE6))
                                 .border(1.dp, Color(0xFFD6CFC4), RoundedCornerShape(6.dp))
-                                .padding(4.dp),
+                                .padding(if (isLogoConfigured) 3.dp else 0.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            CompanyLogoView(
-                                logoUri = logoUri,
-                                modifier = Modifier.fillMaxSize()
-                            )
+                            if (isLogoConfigured) {
+                                CompanyLogoView(
+                                    logoUri = logoUri,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Text(
+                                    text = "LOGO",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        letterSpacing = 1.sp
+                                    ),
+                                    color = Color(0xFF7A7268),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -174,20 +193,18 @@ fun ReceiptPreviewDialog(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            displayCompanyName.lines().forEach { line ->
-                                if (line.isNotBlank()) {
-                                    Text(
-                                        text = line.trim(),
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontSize = companyFontSize,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center,
-                                            lineHeight = companyFontSize * 1.25f
-                                        ),
-                                        color = Color(0xFF111111),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
+                            ThermalReceiptFormatter.splitCompanyLines(displayCompanyName).forEach { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontSize = companyFontSize,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center,
+                                        lineHeight = companyFontSize * 1.25f
+                                    ),
+                                    color = Color(0xFF111111),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
 
@@ -201,7 +218,8 @@ fun ReceiptPreviewDialog(
                             receiptLineHeight = receiptLineHeight,
                             textColor = Color(0xFF1A1A1A),
                             separatorColor = Color(0xFF555555),
-                            language = language
+                            language = language,
+                            isFullPaid = isFullPaid
                         )
                     }
                 }
@@ -303,9 +321,16 @@ fun ReceiptPreviewDialog(
  */
 private fun parseReceiptForPreview(receiptText: String, configuredName: String?): Pair<String, String> {
     val cleanConfigName = configuredName?.trim()?.ifBlank { null }
+    val normalizedConfigName = cleanConfigName
+        ?.replace("\\r\\n", "\n")
+        ?.replace("\\n", "\n")
+        ?.replace("\\r", "\n")
+        ?.replace("\r\n", "\n")
+        ?.replace("\r", "\n")
+
     val lines = receiptText.lines()
     if (lines.isEmpty()) {
-        return (cleanConfigName ?: "POS STATION") to receiptText
+        return (normalizedConfigName ?: "POS STATION") to receiptText
     }
 
     val firstSepIdx = lines.indexOfFirst { it.trim().startsWith("=") || it.trim().startsWith("-") }
@@ -322,15 +347,13 @@ private fun parseReceiptForPreview(receiptText: String, configuredName: String?)
 
     val headerLines = lines.subList(startIdx, endHeaderIdx)
 
-    if (cleanConfigName != null) {
+    if (normalizedConfigName != null) {
         val width = if ((lines.firstOrNull()?.length ?: 32) >= 40) {
             ThermalReceiptFormatter.WIDTH_80MM
         } else {
             ThermalReceiptFormatter.WIDTH_58MM
         }
-        val expectedCompanyLines = cleanConfigName.lines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+        val expectedCompanyLines = ThermalReceiptFormatter.splitCompanyLines(normalizedConfigName, "POS STATION")
             .flatMap { ThermalReceiptFormatter.wrapLinesForWidth(it, width) }
         var matchedCount = 0
         for (line in headerLines) {
@@ -350,7 +373,7 @@ private fun parseReceiptForPreview(receiptText: String, configuredName: String?)
             minOf(expectedCompanyLines.size.coerceAtLeast(1), headerLines.size)
         }
         val remaining = lines.subList(startIdx + skipCount, lines.size).joinToString("\n")
-        return cleanConfigName to remaining
+        return normalizedConfigName to remaining
     }
 
     // Default: find company name line(s) before branch/address/metadata
@@ -358,8 +381,10 @@ private fun parseReceiptForPreview(receiptText: String, configuredName: String?)
     var splitAt = startIdx
     for (i in startIdx until endHeaderIdx) {
         val l = lines[i].trim()
-        if (l.startsWith("Branch") || l.startsWith("শাখা") || l.startsWith("Phone") || l.startsWith("ফোন") ||
-            l.startsWith("Date:") || l.startsWith("Order ID:") || l.startsWith("Operator:") || l.startsWith("Customer:")
+        if (l.startsWith("Branch") || l.contains(" শাখা") || l.endsWith(" শাখা") ||
+            l.startsWith("Phone") || l.contains("ফোন") ||
+            l.startsWith("Date:") || l.startsWith("Order ID:") || l.startsWith("Operator:") || l.startsWith("Customer:") ||
+            l.startsWith("তারিখ:") || l.startsWith("অর্ডার আইডি:") || l.startsWith("অপারেটর:") || l.startsWith("ক্রেতা:")
         ) {
             splitAt = i
             break
@@ -386,7 +411,8 @@ internal data class VoucherItemTableRow(
 internal data class VoucherSummaryRow(
     val label: String,
     val amount: String,
-    val isBold: Boolean = false
+    val isBold: Boolean = false,
+    val isDue: Boolean = false
 )
 
 internal data class ParsedVoucherTable(
@@ -411,7 +437,8 @@ internal fun ReceiptFormattedBody(
     textColor: Color,
     separatorColor: Color,
     explicitLines: List<InvoiceLineEntity> = emptyList(),
-    language: String = "en"
+    language: String = "en",
+    isFullPaid: Boolean = true
 ) {
     val parsedSections = remember(bodyText, explicitLines, language) {
         parseReceiptSectionsForPreview(bodyText, explicitLines, language)
@@ -476,7 +503,8 @@ internal fun ReceiptFormattedBody(
                         receiptLineHeight = receiptLineHeight,
                         textColor = textColor,
                         separatorColor = separatorColor,
-                        language = language
+                        language = language,
+                        isFullPaid = isFullPaid
                     )
                 }
             }
@@ -488,7 +516,8 @@ internal fun ReceiptFormattedBody(
             receiptLineHeight = receiptLineHeight,
             textColor = textColor,
             separatorColor = separatorColor,
-            language = language
+            language = language,
+            isFullPaid = isFullPaid
         )
     }
 }
@@ -584,30 +613,32 @@ private fun ReceiptBodyWithFullPaidBadge(
     receiptLineHeight: TextUnit,
     textColor: Color,
     separatorColor: Color = textColor,
-    language: String = "en"
+    language: String = "en",
+    isFullPaid: Boolean = true
 ) {
     val allLines = text.trimEnd().lines()
 
-    val fullPaidLineIdx = allLines.indexOfFirst {
-        it.contains("FULL PAID") || it.contains("সম্পূর্ণ পরিশোধিত") || it.contains("✓")
+    val statusLineIdx = allLines.indexOfFirst {
+        it.contains("FULL PAID") || it.contains("সম্পূর্ণ পরিশোধিত") || it.contains("✓") ||
+            it.contains("বকেয়া") || it.contains("DUE") || it.contains("UNPAID") || it.contains("✕")
     }
 
-    val sepBeforeFullPaidIdx = if (fullPaidLineIdx != -1) {
-        (fullPaidLineIdx - 1 downTo 0).firstOrNull { isMajorSeparatorLine(allLines[it]) || isMinorSeparatorLine(allLines[it]) }
+    val sepBeforeStatusIdx = if (statusLineIdx != -1) {
+        (statusLineIdx - 1 downTo 0).firstOrNull { isMajorSeparatorLine(allLines[it]) || isMinorSeparatorLine(allLines[it]) }
     } else null
 
-    val splitIdx = sepBeforeFullPaidIdx ?: if (fullPaidLineIdx != -1) fullPaidLineIdx else null
+    val splitIdx = sepBeforeStatusIdx ?: if (statusLineIdx != -1) statusLineIdx else null
 
     if (splitIdx != null) {
-        val totalsText = if (sepBeforeFullPaidIdx != null) {
-            allLines.subList(0, sepBeforeFullPaidIdx + 1).joinToString("\n").trimEnd()
+        val totalsText = if (sepBeforeStatusIdx != null) {
+            allLines.subList(0, sepBeforeStatusIdx + 1).joinToString("\n").trimEnd()
         } else {
-            allLines.subList(0, fullPaidLineIdx).joinToString("\n").trimEnd()
+            allLines.subList(0, statusLineIdx).joinToString("\n").trimEnd()
         }
-        val footerRegionLines = if (sepBeforeFullPaidIdx != null) {
-            allLines.subList(sepBeforeFullPaidIdx + 1, allLines.size)
+        val footerRegionLines = if (sepBeforeStatusIdx != null) {
+            allLines.subList(sepBeforeStatusIdx + 1, allLines.size)
         } else {
-            allLines.subList(fullPaidLineIdx, allLines.size)
+            allLines.subList(statusLineIdx, allLines.size)
         }
 
         if (totalsText.isNotBlank()) {
@@ -634,26 +665,65 @@ private fun ReceiptBodyWithFullPaidBadge(
                 when {
                     trimmed.contains("FULL PAID") || trimmed.contains("সম্পূর্ণ পরিশোধিত") || trimmed.contains("✓") -> {
                         Spacer(modifier = Modifier.height(4.dp))
-                        Row(
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFE8F5E9),
+                            border = BorderStroke(1.5.dp, Color(0xFF2E7D32)),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 4.dp)
+                                .testTag("voucher_paid_badge")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF2E7D32),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = Localization.get(Localization.Key.VOUCHER_FULL_PAID_BADGE, language),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Color(0xFF2E7D32)
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Paid",
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (language == "bn") "সম্পূর্ণ পরিশোধিত (PAID)" else "PAID / FULL PAID",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF2E7D32)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    trimmed.contains("বকেয়া") || trimmed.contains("DUE") || trimmed.contains("UNPAID") || trimmed.contains("✕") -> {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFFFEBEE),
+                            border = BorderStroke(1.5.dp, Color(0xFFC62828)),
+                            modifier = Modifier
+                                .padding(vertical = 4.dp)
+                                .testTag("voucher_due_badge")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Due",
+                                    tint = Color(0xFFC62828),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (language == "bn") "বকেয়া বিল (DUE)" else "DUE / OUTSTANDING",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFFC62828)
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                     }
@@ -994,9 +1064,10 @@ private fun VoucherItemTable(
             color = separatorColor
         )
 
-        // Summary Rows (Sub Total & TOTAL) rendered in the item table columns
+        // Summary Rows (Sub Total, TOTAL, Paid, Due) rendered in the item table columns
         table.summaryRows.forEachIndexed { sIdx, sRow ->
-            val tag = if (sRow.isBold) "voucher_total_row" else "voucher_subtotal_row"
+            val tag = if (sRow.isDue) "voucher_due_row" else if (sRow.isBold) "voucher_total_row" else "voucher_subtotal_row"
+            val rowColor = if (sRow.isDue) Color(0xFFC62828) else textColor
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1018,7 +1089,7 @@ private fun VoucherItemTable(
                         textAlign = TextAlign.Start,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        color = textColor
+                        color = rowColor
                     )
                     Spacer(modifier = Modifier.weight(0.60f))
                     Spacer(modifier = Modifier.weight(0.60f))
@@ -1035,7 +1106,7 @@ private fun VoucherItemTable(
                         textAlign = TextAlign.End,
                         maxLines = 1,
                         softWrap = false,
-                        color = textColor
+                        color = rowColor
                     )
                 } else {
                     Text(
@@ -1050,7 +1121,7 @@ private fun VoucherItemTable(
                         textAlign = TextAlign.Start,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        color = textColor
+                        color = rowColor
                     )
                     Spacer(modifier = Modifier.weight(0.75f))
                     Spacer(modifier = Modifier.weight(0.90f))
@@ -1066,7 +1137,7 @@ private fun VoucherItemTable(
                         textAlign = TextAlign.End,
                         maxLines = 1,
                         softWrap = false,
-                        color = textColor
+                        color = rowColor
                     )
                 }
             }
@@ -1165,6 +1236,8 @@ internal fun parseReceiptSectionsForPreview(
                 trimmed.startsWith("NET PAYABLE", ignoreCase = true) ||
                 trimmed.startsWith("মোট") ||
                 trimmed.startsWith("সর্বমোট")
+        val isPaidRow = trimmed.startsWith("Paid:", ignoreCase = true) || trimmed.startsWith("জমা (Paid):")
+        val isDueRow = trimmed.startsWith("Due:", ignoreCase = true) || trimmed.startsWith("বাকি (Due):")
 
         if (isSubTotal) {
             val amount = extractAmountFromSummaryLine(trimmed)
@@ -1178,8 +1251,20 @@ internal fun parseReceiptSectionsForPreview(
             val label = if (isBn) Localization.get(Localization.Key.VOUCHER_TOTAL_SUMMARY, "bn") else Localization.get(Localization.Key.VOUCHER_TOTAL_SUMMARY, "en")
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = true))
             postTableStartIdx = idx + 1
+        } else if (isPaidRow) {
+            val amount = extractAmountFromSummaryLine(trimmed)
+            val isBn = language.equals("bn", ignoreCase = true) || trimmed.startsWith("জমা")
+            val label = if (isBn) "জমা (Paid):" else "Paid:"
+            summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = false, isDue = false))
+            postTableStartIdx = idx + 1
+        } else if (isDueRow) {
+            val amount = extractAmountFromSummaryLine(trimmed)
+            val isBn = language.equals("bn", ignoreCase = true) || trimmed.startsWith("বাকি")
+            val label = if (isBn) "বাকি (Due):" else "Due:"
+            summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = true, isDue = true))
+            postTableStartIdx = idx + 1
         } else {
-            // Reached non-summary line (FULL PAID, separator, or footer)
+            // Reached non-summary line (FULL PAID, DUE stamp, separator, or footer)
             break
         }
     }

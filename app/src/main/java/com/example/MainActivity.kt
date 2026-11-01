@@ -178,7 +178,7 @@ fun PosMainApp(viewModel: PosViewModel) {
             language = language,
             logoUri = companyHeader?.logoUri,
             companyName = companyHeader?.companyName,
-            isFullPaid = isDraftFullPaid,
+            isFullPaid = selectedInvoiceForReceipt?.let { it.isPaid || (it.roundedTotalBdt - it.paidAmountBdt <= 0L) } ?: isDraftFullPaid,
             onDismiss = {
                 viewModel.closeReceiptPreview()
                 if (navigateHomeAfterPreview) {
@@ -191,11 +191,10 @@ fun PosMainApp(viewModel: PosViewModel) {
                 val targetInv = selectedInvoiceForReceipt
                 if (targetInv != null) {
                     viewModel.printInvoiceFromPreview(targetInv) {
-                        if (navigateHomeAfterPreview) {
-                            isNewInvoiceOpen = false
-                            viewModel.resetNavigateHomeAfterPreview()
-                            viewModel.refreshHistory()
-                        }
+                        isNewInvoiceOpen = false
+                        currentNavIndex = 0
+                        viewModel.resetNavigateHomeAfterPreview()
+                        viewModel.refreshHistory()
                     }
                 } else {
                     viewModel.testPrint()

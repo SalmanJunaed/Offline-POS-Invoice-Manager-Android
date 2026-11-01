@@ -15,12 +15,14 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import com.example.pos.printer.EscPosPrinterEngine
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -149,5 +151,64 @@ class CompanyLogoManagerTest {
         assertEquals(1, fetchedLines.size)
         assertEquals(50000L, fetchedLines[0].unitPricePaisa)
         assertEquals(50000L, fetchedLines[0].lineTotalPaisa)
+    }
+
+    @Test
+    fun testDefaultBundledLogoFallback() {
+        // When no custom logo file exists on disk
+        CompanyLogoManager.removeLogo(context)
+
+        // 1. hasConfiguredLogo with default fallback should return true because R.drawable.logo_original exists
+        assertTrue(
+            "Default official logo must be recognized when no custom logo is uploaded",
+            CompanyLogoManager.hasConfiguredLogo(context, null)
+        )
+
+        // 2. hasConfiguredLogo with allowDefaultFallback = false must return false when no custom logo is uploaded
+        assertFalse(
+            "Strict check without fallback must return false when no custom logo file exists",
+            CompanyLogoManager.hasConfiguredLogo(context, null, allowDefaultFallback = false)
+        )
+
+        // 3. Thermal printer engine must successfully load the bundled logo for both 58mm and 80mm
+        val bitmap58 = EscPosPrinterEngine.loadLogoBitmapForThermal(context, null, "58mm")
+        assertNotNull("Bundled logo must be loaded for 58mm thermal receipts", bitmap58)
+        assertTrue("58mm logo width must be <= 160 dots", bitmap58!!.width <= 160)
+
+        val bitmap80 = EscPosPrinterEngine.loadLogoBitmapForThermal(context, null, "80mm")
+        assertNotNull("Bundled logo must be loaded for 80mm thermal receipts", bitmap80)
+        assertTrue("80mm logo width must be <= 216 dots", bitmap80!!.width <= 216)
+    }
+
+    @Test
+    fun testCustomLogoTakesPriorityOverDefaultBundledLogo() {
+        // Create and save custom logo
+        val customBitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        val tempFile = File(context.cacheDir, "custom_priority_test.png")
+        FileOutputStream(tempFile).use { out ->
+            customBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        val fileUri = Uri.fromFile(tempFile)
+        val savedPath = CompanyLogoManager.copyLogoFromUri(context, fileUri)
+        assertNotNull(savedPath)
+
+        // 1. hasConfiguredLogo returns true for custom logo
+        assertTrue(CompanyLogoManager.hasConfiguredLogo(context, savedPath))
+
+        // 2. loadScaledBitmap loads the custom logo file directly
+        val loadedCustom = CompanyLogoManager.loadScaledBitmap(context, savedPath, 160, 160)
+        assertNotNull(loadedCustom)
+
+        // 3. Thermal loader loads custom logo
+        val thermalBitmap = EscPosPrinterEngine.loadLogoBitmapForThermal(context, savedPath, "58mm")
+        assertNotNull(thermalBitmap)
+
+        // 4. Remove custom logo -> restores default bundled logo
+        val removed = CompanyLogoManager.removeLogo(context)
+        assertTrue(removed)
+        assertNull("After removal, custom effective logo file must be null", CompanyLogoManager.getEffectiveLogoFile(context, null))
+        assertTrue("After custom removal, bundled official logo must be available and recognized", CompanyLogoManager.hasDefaultOfficialLogo(context))
+        assertTrue("hasConfiguredLogo must return true with fallback after custom removal", CompanyLogoManager.hasConfiguredLogo(context, null))
+        assertNotNull("loadScaledBitmap must restore official bundled logo after custom removal", CompanyLogoManager.loadScaledBitmap(context, null, 160, 160))
     }
 }

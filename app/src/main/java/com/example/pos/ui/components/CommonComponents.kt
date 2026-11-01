@@ -72,14 +72,7 @@ fun CompanyLogoView(
     logoUri: String?,
     modifier: Modifier = Modifier,
     contentDescription: String? = "Company Logo",
-    fallback: @Composable () -> Unit = {
-        Icon(
-            imageVector = Icons.Default.Business,
-            contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.size(20.dp)
-        )
-    }
+    fallback: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val logoFile = remember(logoUri) {
@@ -96,7 +89,7 @@ fun CompanyLogoView(
             contentScale = ContentScale.Fit,
             modifier = modifier
         )
-    } else {
+    } else if (CompanyLogoManager.hasDefaultOfficialLogo(context)) {
         // Fallback to built-in official canonical logo drawable
         AsyncImage(
             model = ImageRequest.Builder(context)
@@ -107,6 +100,8 @@ fun CompanyLogoView(
             contentScale = ContentScale.Fit,
             modifier = modifier
         )
+    } else if (fallback != null) {
+        fallback()
     }
 }
 
@@ -156,7 +151,7 @@ fun TopStationHeader(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(Color.White)
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), CircleShape)
@@ -179,7 +174,7 @@ fun TopStationHeader(
                                         imageVector = Icons.Default.Business,
                                         contentDescription = "Company",
                                         tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(24.dp)
                                     )
                                 }
                             }
@@ -188,7 +183,7 @@ fun TopStationHeader(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = company?.companyName ?: "মেসার্স রাকিব ফিলিং স্টেশন",
+                            text = (company?.companyName ?: "মেসার্স রাকিব ফিলিং স্টেশন\nএন্ড\nএল পি জি অটোগ্যাস ফিলিং স্টেশন").replace("\n", " "),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

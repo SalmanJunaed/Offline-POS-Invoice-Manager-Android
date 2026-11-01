@@ -96,9 +96,43 @@ object CompanyLogoManager {
     }
 
     /**
+     * Checks if a custom company logo or official bundled company logo is available.
+     * When allowDefaultFallback is true (default), recognizes the bundled official logo (R.drawable.logo_original).
+     * When allowDefaultFallback is false, strictly checks for a saved custom logo file on disk.
+     */
+    fun hasConfiguredLogo(context: Context, logoUri: String?, allowDefaultFallback: Boolean = true): Boolean {
+        if (getEffectiveLogoFile(context, logoUri) != null) {
+            return true
+        }
+        if (allowDefaultFallback) {
+            return hasDefaultOfficialLogo(context)
+        }
+        return false
+    }
+
+    /**
+     * Checks if the built-in official canonical company logo (R.drawable.logo_original) is valid and available.
+     */
+    fun hasDefaultOfficialLogo(context: Context): Boolean {
+        return try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeResource(context.resources, R.drawable.logo_original, options)
+            options.outWidth > 0 && options.outHeight > 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * Safely decodes a scaled down Bitmap without loading massive unneeded byte data into memory.
      */
-    fun loadScaledBitmap(context: Context, logoUri: String?, reqWidth: Int = 256, reqHeight: Int = 256): Bitmap? {
+    fun loadScaledBitmap(
+        context: Context,
+        logoUri: String?,
+        reqWidth: Int = 256,
+        reqHeight: Int = 256,
+        allowFallback: Boolean = true
+    ): Bitmap? {
         val file = getEffectiveLogoFile(context, logoUri)
         return try {
             if (file != null && file.exists() && file.length() > 0) {
@@ -111,7 +145,7 @@ object CompanyLogoManager {
                 options.inJustDecodeBounds = false
 
                 BitmapFactory.decodeFile(file.absolutePath, options)
-            } else {
+            } else if (allowFallback) {
                 // Read from canonical drawable resource
                 val options = BitmapFactory.Options().apply {
                     inJustDecodeBounds = true
@@ -122,6 +156,8 @@ object CompanyLogoManager {
                 options.inJustDecodeBounds = false
 
                 BitmapFactory.decodeResource(context.resources, R.drawable.logo_original, options)
+            } else {
+                null
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to decode scaled logo bitmap", e)

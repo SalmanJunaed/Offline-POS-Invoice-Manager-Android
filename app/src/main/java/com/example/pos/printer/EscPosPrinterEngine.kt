@@ -85,12 +85,26 @@ object EscPosPrinterEngine {
                         }
                     }
 
-                    val isCompanyHeader = index in 0..4 && !line.contains("=") && !line.contains("-") && leadingSpaces >= 4
-                    val alignment = if (isFullPaid || leadingSpaces >= 4) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL
+                    val isMetadataOrSeparator = line.contains("=") || line.contains("-") ||
+                            trimmed.startsWith("Date:", ignoreCase = true) ||
+                            trimmed.startsWith("Order ID:", ignoreCase = true) ||
+                            trimmed.startsWith("Operator:", ignoreCase = true) ||
+                            trimmed.startsWith("Customer:", ignoreCase = true) ||
+                            trimmed.startsWith("তারিখ:", ignoreCase = true) ||
+                            trimmed.startsWith("অর্ডার আইডি:", ignoreCase = true) ||
+                            trimmed.startsWith("অপারেটর:", ignoreCase = true) ||
+                            trimmed.startsWith("ক্রেতা:", ignoreCase = true) ||
+                            trimmed.startsWith("Branch", ignoreCase = true) ||
+                            trimmed.startsWith("Phone", ignoreCase = true) ||
+                            trimmed.startsWith("ফোন:", ignoreCase = true) ||
+                            trimmed.contains(" শাখা") ||
+                            trimmed.endsWith("শাখা")
+                    val isCompanyHeader = index in 0..5 && !isMetadataOrSeparator
+                    val alignment = if (isFullPaid || isCompanyHeader || leadingSpaces >= 2) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL
                     val raster = ThermalReceiptFormatter.renderTextToRaster(
                         text = trimmed,
                         widthDots = widthDots,
-                        textSizePx = if (isCompanyHeader) 30f else if (isFullPaid) 24f else 22f,
+                        textSizePx = if (isCompanyHeader) (if (is80mm) 34f else 28f) else if (isFullPaid) 24f else 22f,
                         isBold = isCompanyHeader || isFullPaid,
                         alignment = alignment
                     )
@@ -172,10 +186,20 @@ object EscPosPrinterEngine {
 
     /**
      * Loads the company logo bitmap safely for thermal printing.
+     * Uses balanced logo proportions: max 160 dots for 58mm, 216 dots for 80mm.
+     * Falls back to the official bundled company logo when no custom logo is configured.
      */
     fun loadLogoBitmapForThermal(context: Context, logoUri: String?, paperSize: String): Bitmap? {
-        val maxDots = if (paperSize.contains("80")) 384 else 256
-        return CompanyLogoManager.loadScaledBitmap(context, logoUri, maxDots, maxDots)
+        val maxDots = if (paperSize.contains("80")) 216 else 160
+        val bitmap = CompanyLogoManager.loadScaledBitmap(context, logoUri, maxDots, maxDots, allowFallback = true) ?: return null
+        return if (bitmap.width > maxDots || bitmap.height > maxDots) {
+            val scale = minOf(maxDots.toFloat() / bitmap.width, maxDots.toFloat() / bitmap.height, 1.0f)
+            val targetW = (bitmap.width * scale).toInt().coerceAtLeast(1)
+            val targetH = (bitmap.height * scale).toInt().coerceAtLeast(1)
+            Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+        } else {
+            bitmap
+        }
     }
 
     // Helper functions for visual calculation delegation

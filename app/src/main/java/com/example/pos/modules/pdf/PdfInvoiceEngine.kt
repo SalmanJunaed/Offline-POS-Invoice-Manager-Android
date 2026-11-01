@@ -352,8 +352,14 @@ object PdfInvoiceEngine {
         val dateStr = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.US).format(Date(invoice.dateTime))
         canvas.drawText("তারিখ / Date: $dateStr", MARGIN_RIGHT, logoTop + 32f, textPaint)
 
-        textPaint.color = COLOR_ACCENT_GREEN
-        canvas.drawText("● PAID / পরিশোধিত", MARGIN_RIGHT, logoTop + 46f, textPaint)
+        val isPaid = invoice.isPaid || (invoice.roundedTotalBdt - invoice.paidAmountBdt <= 0L)
+        if (isPaid) {
+            textPaint.color = COLOR_ACCENT_GREEN
+            canvas.drawText("● PAID / পরিশোধিত", MARGIN_RIGHT, logoTop + 46f, textPaint)
+        } else {
+            textPaint.color = Color.rgb(198, 40, 40)
+            canvas.drawText("● DUE / বকেয়া", MARGIN_RIGHT, logoTop + 46f, textPaint)
+        }
 
         // 4. Header Divider
         linePaint.color = COLOR_BORDER
@@ -391,9 +397,8 @@ object PdfInvoiceEngine {
         // Metadata Right Column
         val col2X = 350f
         canvas.drawText("বিক্রয়কারী / Operator: ${invoice.operatorName}", col2X, metaTop + 18f, textPaint)
-        val branchCode = company?.branchNumber?.ifBlank { "01" } ?: "01"
-        canvas.drawText("শাখা কোড / Branch: $branchCode", col2X, metaTop + 34f, textPaint)
-        canvas.drawText("বিল স্ট্যাটাস: নগদ পরিশোধ (Cash)", col2X, metaTop + 50f, textPaint)
+        val statusText = if (isPaid) "বিল স্ট্যাটাস: পরিশোধিত (Cash)" else "বিল স্ট্যাটাস: বকেয়া (Due)"
+        canvas.drawText(statusText, col2X, metaTop + 50f, textPaint)
     }
 
     private fun drawContinuationHeader(
@@ -598,6 +603,43 @@ object PdfInvoiceEngine {
         textPaint.textSize = 13f
         val roundedTotalFormatted = "৳ ${invoice.roundedTotalBdt}.00"
         canvas.drawText(roundedTotalFormatted, MARGIN_RIGHT - 10f, roundedTop + 23f, textPaint)
+
+        // Paid / Due Status Stamp (Centered in Totals Card column)
+        val isFullPaid = invoice.isPaid || (invoice.roundedTotalBdt - invoice.paidAmountBdt <= 0L)
+        val stampTop = roundedTop + 42f
+        val stampHeight = 22f
+        val stampRect = RectF(totalsLeft - 6f, stampTop, MARGIN_RIGHT, stampTop + stampHeight)
+
+        if (isFullPaid) {
+            fillPaint.color = Color.rgb(232, 245, 233)
+            canvas.drawRoundRect(stampRect, 4f, 4f, fillPaint)
+            linePaint.color = COLOR_ACCENT_GREEN
+            linePaint.style = Paint.Style.STROKE
+            linePaint.strokeWidth = 1f
+            canvas.drawRoundRect(stampRect, 4f, 4f, linePaint)
+            linePaint.style = Paint.Style.FILL
+
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.color = COLOR_ACCENT_GREEN
+            textPaint.textSize = 10f
+            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            canvas.drawText("PAID / পরিশোধিত ✓", (totalsLeft - 6f + MARGIN_RIGHT) / 2f, stampTop + 15f, textPaint)
+        } else {
+            val dueAmount = maxOf(0L, invoice.roundedTotalBdt - invoice.paidAmountBdt)
+            fillPaint.color = Color.rgb(255, 235, 238)
+            canvas.drawRoundRect(stampRect, 4f, 4f, fillPaint)
+            linePaint.color = Color.rgb(198, 40, 40)
+            linePaint.style = Paint.Style.STROKE
+            linePaint.strokeWidth = 1f
+            canvas.drawRoundRect(stampRect, 4f, 4f, linePaint)
+            linePaint.style = Paint.Style.FILL
+
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.color = Color.rgb(198, 40, 40)
+            textPaint.textSize = 9.5f
+            textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            canvas.drawText("DUE / বকেয়া ✕ (৳ $dueAmount.00)", (totalsLeft - 6f + MARGIN_RIGHT) / 2f, stampTop + 15f, textPaint)
+        }
     }
 
     private fun drawPageFooter(

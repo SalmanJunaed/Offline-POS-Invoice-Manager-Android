@@ -117,6 +117,7 @@ import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.ItemSalesSummary
 import com.example.pos.data.repository.HistorySortOption
 import com.example.pos.domain.FinancialCalculationEngine
+import com.example.pos.core.util.CompanyLogoManager
 import com.example.pos.ui.components.CompanyLogoView
 import com.example.pos.ui.components.ImportSummaryDialog
 import com.example.pos.ui.components.TopStationHeader
@@ -181,7 +182,6 @@ fun HistoryScreen(
     var customStartDateText by remember { mutableStateOf("") }
     var customEndDateText by remember { mutableStateOf("") }
     var customDateErrorText by remember { mutableStateOf<String?>(null) }
-    var showXlsxSync by remember { mutableStateOf(false) }
 
     val isDeletingInvoice by viewModel.isDeletingInvoice.collectAsState()
     var invoiceToDelete by remember { mutableStateOf<InvoiceEntity?>(null) }
@@ -194,6 +194,7 @@ fun HistoryScreen(
     LaunchedEffect(Unit) {
         viewModel.closeDetailsDialogEvent.collect {
             selectedInvoiceForDetails = null
+            activeHistoryTab = 0
         }
     }
 
@@ -209,14 +210,6 @@ fun HistoryScreen(
     ) { uri ->
         if (uri != null) {
             viewModel.exportSalesToUri(uri)
-        }
-    }
-
-    val importFileLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importSalesFromUri(uri)
         }
     }
 
@@ -821,125 +814,6 @@ fun HistoryScreen(
                                                 fontSize = 12.sp
                                             )
                                         }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // XLSX Branch Synchronization (Offline Multi-Branch Exchange - Collapsible)
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("xlsx_branch_sync_card"),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showXlsxSync = !showXlsxSync },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Sync,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = Localization.string(Localization.Key.XLSX_SYNC_TITLE, language),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (isImporting || isExporting) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                }
-                                Icon(
-                                    imageVector = if (showXlsxSync) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = if (showXlsxSync) "Collapse" else "Expand",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-
-                        AnimatedVisibility(visible = showXlsxSync) {
-                            Column(modifier = Modifier.padding(top = 8.dp)) {
-                                Text(
-                                    text = Localization.string(Localization.Key.XLSX_SYNC_DESC, language),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-                                            exportFileLauncher.launch("POS_Sales_Export_$timeStamp.xlsx")
-                                        },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("btn_export_xlsx"),
-                                        shape = RoundedCornerShape(8.dp),
-                                        enabled = !isExporting && !isImporting
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.FileDownload,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = Localization.string(Localization.Key.BTN_EXPORT_EXCEL, language),
-                                            fontSize = 12.sp
-                                        )
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            importFileLauncher.launch(
-                                                arrayOf(
-                                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                                    "application/octet-stream",
-                                                    "*/*"
-                                                )
-                                            )
-                                        },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("btn_import_xlsx"),
-                                        shape = RoundedCornerShape(8.dp),
-                                        enabled = !isExporting && !isImporting
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.FileUpload,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = Localization.string(Localization.Key.BTN_IMPORT_EXCEL, language),
-                                            fontSize = 12.sp
-                                        )
                                     }
                                 }
                             }
@@ -1742,30 +1616,38 @@ fun ReceiptDetailsDialog(
                                 .padding(12.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            val density = LocalDensity.current
-                            val logoSizeDp = with(density) { 100.toDp() }
-                            // Official canonical logo at top of voucher
+                            val context = LocalContext.current
+                            val logoSizeDp = 48.dp
+                            val isLogoConfigured: Boolean = remember(logoUri, context) {
+                                CompanyLogoManager.hasConfiguredLogo(context, logoUri)
+                            }
+                            // Reserved logo area at top of voucher
                             Box(
                                 modifier = Modifier
                                     .size(logoSizeDp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(MaterialTheme.colorScheme.surface)
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
-                                    .padding(4.dp),
+                                    .padding(if (isLogoConfigured) 3.dp else 0.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CompanyLogoView(
-                                    logoUri = logoUri,
-                                    modifier = Modifier.fillMaxSize(),
-                                    fallback = {
-                                        Icon(
-                                            imageVector = Icons.Default.Business,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(36.dp)
-                                        )
-                                    }
-                                )
+                                if (isLogoConfigured) {
+                                    CompanyLogoView(
+                                        logoUri = logoUri,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Text(
+                                        text = "LOGO",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            letterSpacing = 1.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             val is80mm = (receiptText.lines().firstOrNull()?.length ?: 32) >= 40
@@ -1782,6 +1664,7 @@ fun ReceiptDetailsDialog(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             } else {
+                                val invoiceIsPaid = invoice.isPaid || (invoice.roundedTotalBdt - invoice.paidAmountBdt <= 0L)
                                 ReceiptFormattedBody(
                                     bodyText = receiptText,
                                     is80mm = is80mm,
@@ -1790,7 +1673,8 @@ fun ReceiptDetailsDialog(
                                     textColor = MaterialTheme.colorScheme.onSurface,
                                     separatorColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     explicitLines = lines,
-                                    language = language
+                                    language = language,
+                                    isFullPaid = invoiceIsPaid
                                 )
                             }
                         }

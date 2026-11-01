@@ -510,6 +510,73 @@ class ThermalPrinterLayoutTest {
         assertTrue("80mm receipt must contain '86 ৳'", text80.contains("86 ৳"))
     }
 
+    @Test
+    fun testPreserveThreeLineCompanyName_58mmAnd80mm() {
+        val threeLineName = "মেসার্স রাকিব ফিলিং স্টেশন\nএন্ড\nএল পি জি অটোগ্যাস ফিলিং স্টেশন"
+        val header = createSampleHeader().copy(companyName = threeLineName)
+        val invoice = createSampleInvoice()
+        val lines = createSampleLines()
+
+        // 1. Verify 58mm receipt text maintains 3 lines
+        val text58 = ThermalReceiptFormatter.generateReceiptText(
+            header = header,
+            invoice = invoice,
+            lines = lines,
+            paperSize = "58mm",
+            footerLine1 = "",
+            footerLine2 = ""
+        )
+        val lines58 = text58.lines().map { it.trim() }.filter { it.isNotBlank() }
+        assertEquals("মেসার্স রাকিব ফিলিং স্টেশন", lines58[0])
+        assertEquals("এন্ড", lines58[1])
+        assertEquals("এল পি জি অটোগ্যাস ফিলিং স্টেশন", lines58[2])
+
+        // 2. Verify 80mm receipt text maintains 3 lines
+        val text80 = ThermalReceiptFormatter.generateReceiptText(
+            header = header,
+            invoice = invoice,
+            lines = lines,
+            paperSize = "80mm",
+            footerLine1 = "",
+            footerLine2 = ""
+        )
+        val lines80 = text80.lines().map { it.trim() }.filter { it.isNotBlank() }
+        assertEquals("মেসার্স রাকিব ফিলিং স্টেশন", lines80[0])
+        assertEquals("এন্ড", lines80[1])
+        assertEquals("এল পি জি অটোগ্যাস ফিলিং স্টেশন", lines80[2])
+
+        // 3. Verify literal escaped \n also splits into 3 lines
+        val escapedName = "মেসার্স রাকিব ফিলিং স্টেশন\\nএন্ড\\nএল পি জি অটোগ্যাস ফিলিং স্টেশন"
+        val splitLines = ThermalReceiptFormatter.splitCompanyLines(escapedName)
+        assertEquals(3, splitLines.size)
+        assertEquals("মেসার্স রাকিব ফিলিং স্টেশন", splitLines[0])
+        assertEquals("এন্ড", splitLines[1])
+        assertEquals("এল পি জি অটোগ্যাস ফিলিং স্টেশন", splitLines[2])
+
+        // 4. Verify ESC/POS binary builds successfully for 58mm & 80mm with 3-line header
+        val escPos58 = ThermalReceiptFormatter.buildEscPosReceipt(
+            header = header,
+            invoice = invoice,
+            lines = lines,
+            paperSize = "58mm",
+            autoCutter = true,
+            footerLine1 = "",
+            footerLine2 = ""
+        )
+        assertTrue(escPos58.isNotEmpty())
+
+        val escPos80 = ThermalReceiptFormatter.buildEscPosReceipt(
+            header = header,
+            invoice = invoice,
+            lines = lines,
+            paperSize = "80mm",
+            autoCutter = true,
+            footerLine1 = "",
+            footerLine2 = ""
+        )
+        assertTrue(escPos80.isNotEmpty())
+    }
+
     private fun List<Byte>.containsSubsequence(sub: ByteArray): Boolean {
         for (i in 0..this.size - sub.size) {
             var match = true

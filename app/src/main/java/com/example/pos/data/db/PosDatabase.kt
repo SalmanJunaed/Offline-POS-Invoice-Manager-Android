@@ -207,7 +207,7 @@ abstract class PosDatabase : RoomDatabase() {
             companyDao.insertOrUpdate(
                 CompanyHeaderEntity(
                     id = 1,
-                    companyName = "মেসার্স রাকিব ফিলিং স্টেশন এন্ড এল পি জি অটোগ্যাস ফিলিং স্টেশন",
+                    companyName = "মেসার্স রাকিব ফিলিং স্টেশন\nএন্ড\nএল পি জি অটোগ্যাস ফিলিং স্টেশন",
                     branchName = "মহাদেবপুর শাখা",
                     branchNumber = "01",
                     address = "আখেড়া, মহাদেবপুর, নওগাঁ",

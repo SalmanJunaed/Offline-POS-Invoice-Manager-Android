@@ -361,7 +361,17 @@ fun CompanyHeaderSettingsTab(
         }
     }
 
-    var name by remember(company) { mutableStateOf(company?.companyName ?: "") }
+    val defaultCompanyName = "মেসার্স রাকিব ফিলিং স্টেশন\nএন্ড\nএল পি জি অটোগ্যাস ফিলিং স্টেশন"
+    var name by remember(company) {
+        val currentName = company?.companyName
+        mutableStateOf(
+            if (currentName.isNullOrBlank() || currentName == "মেসার্স রাকিব ফিলিং স্টেশন এন্ড এল পি জি অটোগ্যাস ফিলিং স্টেশন") {
+                defaultCompanyName
+            } else {
+                currentName
+            }
+        )
+    }
     var branch by remember(company) { mutableStateOf(company?.branchName ?: "") }
     var num by remember(company) { mutableStateOf(company?.branchNumber ?: "") }
     var phone by remember(company) { mutableStateOf(company?.phoneNumber ?: "") }
@@ -545,7 +555,8 @@ fun CompanyHeaderSettingsTab(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(Localization.get(Localization.Key.COMPANY_NAME, language), fontSize = 12.sp) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))

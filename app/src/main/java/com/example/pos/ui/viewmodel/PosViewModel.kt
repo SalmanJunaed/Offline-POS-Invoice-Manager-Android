@@ -1282,10 +1282,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     if (res.isSuccess) {
                         _toastMessage.value = if (isBn) "ভাউচার #${invoice.orderId} প্রিন্ট সফল!" else "Receipt printed for #${invoice.orderId}!"
                         closeReceiptPreview()
-                        if (_closeDetailsOnPrintSuccess.value) {
-                            _closeDetailsOnPrintSuccess.value = false
-                            _closeDetailsDialogEvent.tryEmit(Unit)
-                        }
+                        _closeDetailsOnPrintSuccess.value = false
+                        _closeDetailsDialogEvent.tryEmit(Unit)
                         onSuccess?.invoke()
                     } else {
                         _toastMessage.value = if (isBn) "প্রিন্টার ত্রুটি: ${res.exceptionOrNull()?.message}" else "Printer error: ${res.exceptionOrNull()?.message}"
@@ -1639,7 +1637,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     updatedAt = System.currentTimeMillis()
                 ) ?: CompanyHeaderEntity(
                     id = 1,
-                    companyName = "মেসার্স সততা ফিলিং স্টেশন",
+                    companyName = "মেসার্স রাকিব ফিলিং স্টেশন\nএন্ড\nএল পি জি অটোগ্যাস ফিলিং স্টেশন",
                     branchName = "প্রধান শাখা",
                     branchNumber = "01",
                     address = "ঢাকা, বাংলাদেশ",
@@ -1669,7 +1667,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     updatedAt = System.currentTimeMillis()
                 ) ?: CompanyHeaderEntity(
                     id = 1,
-                    companyName = "মেসার্স সততা ফিলিং স্টেশন",
+                    companyName = "মেসার্স রাকিব ফিলিং স্টেশন\nএন্ড\nএল পি জি অটোগ্যাস ফিলিং স্টেশন",
                     branchName = "প্রধান শাখা",
                     branchNumber = "01",
                     address = "ঢাকা, বাংলাদেশ",
