@@ -96,6 +96,16 @@ interface HistoryRepository {
         endDate: Long
     ): Flow<List<com.example.pos.data.db.SalesPeriodAggregate>>
 
+    fun getPeriodDue(
+        query: String = "",
+        orderIdFilter: String = "",
+        customerFilter: String = "",
+        startDate: Long,
+        endDate: Long
+    ): Flow<Long>
+
+    fun getOverallOutstandingDue(): Flow<Long>
+
     fun getLinesForOrderFlow(orderId: String): Flow<List<InvoiceLineEntity>>
 
     suspend fun getLinesForOrders(orderIds: List<String>): List<InvoiceLineEntity>
@@ -219,6 +229,18 @@ class HistoryRepositoryImpl(private val invoiceDao: InvoiceDao) : HistoryReposit
         endDate: Long
     ): Flow<List<com.example.pos.data.db.SalesPeriodAggregate>> =
         invoiceDao.getSalesByYearFlow(query.trim(), orderIdFilter.trim(), customerFilter.trim(), startDate, endDate)
+
+    override fun getPeriodDue(
+        query: String,
+        orderIdFilter: String,
+        customerFilter: String,
+        startDate: Long,
+        endDate: Long
+    ): Flow<Long> =
+        invoiceDao.getPeriodDueFilteredFlow(query.trim(), orderIdFilter.trim(), customerFilter.trim(), startDate, endDate)
+
+    override fun getOverallOutstandingDue(): Flow<Long> =
+        invoiceDao.getOverallOutstandingDueFlow()
 
     override fun getLinesForOrderFlow(orderId: String): Flow<List<InvoiceLineEntity>> =
         invoiceDao.getLinesForOrderFlow(orderId)

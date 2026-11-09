@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 interface PaymentRepository {
     fun getPaymentsForOrder(orderId: String): Flow<List<PaymentRecordEntity>>
     fun getPaymentMethodBreakdown(): Flow<List<PaymentMethodSummary>>
+    fun getPaymentMethodBreakdownFiltered(startDate: Long, endDate: Long): Flow<List<PaymentMethodSummary>>
     suspend fun recordPayment(orderId: String, method: String, amountPaidPaisa: Long, ref: String?): PosResult<Unit>
 }
 
@@ -19,6 +20,9 @@ class PaymentRepositoryImpl(private val paymentDao: PaymentDao) : PaymentReposit
 
     override fun getPaymentMethodBreakdown(): Flow<List<PaymentMethodSummary>> =
         paymentDao.getPaymentMethodBreakdown()
+
+    override fun getPaymentMethodBreakdownFiltered(startDate: Long, endDate: Long): Flow<List<PaymentMethodSummary>> =
+        paymentDao.getPaymentMethodBreakdownFiltered(startDate, endDate)
 
     override suspend fun recordPayment(
         orderId: String,

@@ -355,6 +355,44 @@ interface InvoiceDao {
     ): Flow<List<ItemSalesSummary>>
 
     /**
+     * Outstanding due for invoices created within the selected date range.
+     * Evaluated using invoice-level outstanding balance: SUM(rounded_total_bdt - paid_amount_bdt).
+     * Excludes fully paid invoices and clamps negative balances to zero.
+     */
+    @Query(
+        """
+        SELECT 
+            COALESCE(SUM(CASE WHEN rounded_total_bdt > paid_amount_bdt THEN rounded_total_bdt - paid_amount_bdt ELSE 0 END), 0)
+        FROM invoices
+        WHERE date_time BETWEEN :startDate AND :endDate
+        AND (:query = '' OR order_id LIKE '%' || :query || '%' OR customer_info LIKE '%' || :query || '%')
+        AND (:orderIdFilter = '' OR order_id LIKE '%' || :orderIdFilter || '%')
+        AND (:customerFilter = '' OR customer_info LIKE '%' || :customerFilter || '%')
+        AND rounded_total_bdt > paid_amount_bdt
+        """
+    )
+    fun getPeriodDueFilteredFlow(
+        query: String = "",
+        orderIdFilter: String = "",
+        customerFilter: String = "",
+        startDate: Long,
+        endDate: Long
+    ): Flow<Long>
+
+    /**
+     * Overall outstanding due for all invoices across all time, independent of date filter.
+     */
+    @Query(
+        """
+        SELECT 
+            COALESCE(SUM(CASE WHEN rounded_total_bdt > paid_amount_bdt THEN rounded_total_bdt - paid_amount_bdt ELSE 0 END), 0)
+        FROM invoices
+        WHERE rounded_total_bdt > paid_amount_bdt
+        """
+    )
+    fun getOverallOutstandingDueFlow(): Flow<Long>
+
+    /**
      * Aggregated sales grouped by calendar day (YYYY-MM-DD) for graph analytics.
      * Evaluated entirely database-side with zero heavy in-memory dataset mapping.
      */
@@ -681,6 +719,16 @@ interface PaymentDao {
 
     @Query("SELECT payment_method, COUNT(*) as count, SUM(amount_paid_paisa) as totalPaisa FROM payment_records GROUP BY payment_method")
     fun getPaymentMethodBreakdown(): Flow<List<PaymentMethodSummary>>
+
+    @Query(
+        """
+        SELECT payment_method, COUNT(*) as count, COALESCE(SUM(amount_paid_paisa), 0) as totalPaisa 
+        FROM payment_records 
+        WHERE timestamp BETWEEN :startDate AND :endDate 
+        GROUP BY payment_method
+        """
+    )
+    fun getPaymentMethodBreakdownFiltered(startDate: Long, endDate: Long): Flow<List<PaymentMethodSummary>>
 }
 
 data class PaymentMethodSummary(

@@ -1,9 +1,10 @@
-package com.example.pos
+package com.example
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import com.example.pos.data.db.ItemSalesSummary
 import com.example.pos.data.db.SalesPeriodAggregate
 import com.example.pos.domain.model.ChartDataPoint
@@ -23,7 +24,7 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [36])
+@Config(qualifiers = RobolectricDeviceQualifiers.Pixel7, sdk = [36])
 class AnalyticsDashboardLayoutTest {
 
     @get:Rule
@@ -121,7 +122,11 @@ class AnalyticsDashboardLayoutTest {
         composeTestRule.onNodeWithTag("chart_bar_1").assertIsDisplayed()
 
         // Verify Top Selling and Breakdown tables
+        composeTestRule.onNodeWithTag("analytics_dashboard_view").performScrollToIndex(5)
         composeTestRule.onNodeWithTag("top_selling_items_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("analytics_dashboard_view").performScrollToIndex(4)
+        composeTestRule.onNodeWithTag("detail_segment_transactions").performClick()
+        composeTestRule.onNodeWithTag("analytics_dashboard_view").performScrollToIndex(5)
         composeTestRule.onNodeWithTag("period_breakdown_table").assertIsDisplayed()
     }
 

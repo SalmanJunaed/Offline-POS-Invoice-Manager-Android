@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.Business
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
@@ -61,6 +62,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -76,6 +80,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.SelectableDates
+import androidx.compose.material3.rememberDatePickerState
+import com.example.pos.core.util.DateTimeUtils
+import java.util.TimeZone
 import androidx.compose.ui.text.font.FontFamily
 import com.example.pos.data.db.CompanyHeaderEntity
 import com.example.pos.data.db.InvoiceEntity
@@ -161,8 +169,6 @@ fun SettingsScreen(
         Localization.get(Localization.Key.TAB_COMPANY_HEADER, language),
         Localization.get(Localization.Key.TAB_USER_PROFILE, language),
         Localization.get(Localization.Key.TAB_FOOTER_NOTE, language),
-        Localization.get(Localization.Key.TAB_LANGUAGE, language),
-        Localization.get(Localization.Key.TAB_THEME, language),
         Localization.get(Localization.Key.TAB_PRINTER, language),
         Localization.get(Localization.Key.TAB_DATABASE_STATUS, language)
     )
@@ -186,7 +192,7 @@ fun SettingsScreen(
             }
         )
 
-        // 6 Tabs as specified in PRD Section 5.7
+        // 5 Tabs: Company Header, Operator Profile, Footer Note, Printer Settings, Database Capacity & Storage
         ScrollableTabRow(
             selectedTabIndex = selectedTabIndex,
             edgePadding = 12.dp,
@@ -246,20 +252,6 @@ fun SettingsScreen(
                     )
                 }
                 3 -> item {
-                    LanguageSettingsTab(
-                        currentLang = language,
-                        language = language,
-                        onSelectLang = { viewModel.setLanguage(it) }
-                    )
-                }
-                4 -> item {
-                    ThemeSettingsTab(
-                        currentTheme = themeMode,
-                        language = language,
-                        onSelectTheme = { viewModel.setThemeMode(it) }
-                    )
-                }
-                5 -> item {
                     PrinterSettingsTab(
                         paperSize = appSettings?.paperSize ?: "58mm",
                         autoCutter = appSettings?.autoCutterEnabled ?: true,
@@ -283,7 +275,7 @@ fun SettingsScreen(
                         companyHeader = companyHeader
                     )
                 }
-                6 -> item {
+                4 -> item {
                     DatabaseStatusSettingsTab(
                         totalInvoices = totalInvoiceCount,
                         totalLines = totalInvoiceLinesCount,
@@ -859,135 +851,6 @@ fun FooterNoteSettingsTab(
     }
 }
 
-@Composable
-fun LanguageSettingsTab(
-    currentLang: String,
-    language: String,
-    onSelectLang: (String) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Language, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = Localization.get(Localization.Key.TAB_LANGUAGE, language),
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelectLang("bn") }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = currentLang == "bn",
-                    onClick = { onSelectLang("bn") }
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        text = Localization.get(Localization.Key.LANGUAGE_BANGLA_TITLE, language),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
-                    )
-                    Text(
-                        text = Localization.get(Localization.Key.LANGUAGE_BANGLA_DESC, language),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                }
-            }
-
-            HorizontalDivider()
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelectLang("en") }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = currentLang == "en",
-                    onClick = { onSelectLang("en") }
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        text = Localization.get(Localization.Key.LANGUAGE_ENGLISH_TITLE, language),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
-                    )
-                    Text(
-                        text = Localization.get(Localization.Key.LANGUAGE_ENGLISH_DESC, language),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ThemeSettingsTab(
-    currentTheme: String,
-    language: String,
-    onSelectTheme: (String) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.DarkMode, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = Localization.get(Localization.Key.TAB_THEME, language),
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelectTheme("LIGHT") }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(selected = currentTheme == "LIGHT", onClick = { onSelectTheme("LIGHT") })
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(Localization.get(Localization.Key.THEME_LIGHT, language), style = MaterialTheme.typography.bodyLarge)
-            }
-
-            HorizontalDivider()
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelectTheme("DARK") }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(selected = currentTheme == "DARK", onClick = { onSelectTheme("DARK") })
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(Localization.get(Localization.Key.THEME_DARK, language), style = MaterialTheme.typography.bodyLarge)
-            }
-        }
-    }
-}
 
 @Composable
 fun PrinterSettingsTab(
@@ -1777,6 +1640,7 @@ private fun DeviceListItem(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DatabaseStatusSettingsTab(
     totalInvoices: Int,
@@ -1801,6 +1665,8 @@ fun DatabaseStatusSettingsTab(
     var exportToDateText by remember { mutableStateOf("") }
     var exportValidationError by remember { mutableStateOf<String?>(null) }
     var showFullExportConfirmAlert by remember { mutableStateOf(false) }
+    var showFromDatePicker by remember { mutableStateOf(false) }
+    var showToDatePicker by remember { mutableStateOf(false) }
 
     val dbSizeFormatted = remember(databaseSizeBytes) {
         if (databaseSizeBytes <= 0) {
@@ -1904,6 +1770,152 @@ fun DatabaseStatusSettingsTab(
                 }
             }
         )
+    }
+
+    if (showFromDatePicker) {
+        val initialFromMillis = remember(exportFromDateText) {
+            parseDateDdMmYyyy(exportFromDateText)?.time ?: System.currentTimeMillis()
+        }
+        val fromDatePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialFromMillis
+        )
+        DatePickerDialog(
+            onDismissRequest = { showFromDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        fromDatePickerState.selectedDateMillis?.let { utcMillis ->
+                            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                                timeInMillis = utcMillis
+                            }
+                            val formatted = String.format(
+                                Locale.US,
+                                "%02d-%02d-%04d",
+                                cal.get(Calendar.DAY_OF_MONTH),
+                                cal.get(Calendar.MONTH) + 1,
+                                cal.get(Calendar.YEAR)
+                            )
+                            val parsedNewFrom = parseDateDdMmYyyy(formatted)
+                            val parsedExistingTo = parseDateDdMmYyyy(exportToDateText)
+                            if (parsedNewFrom != null && parsedExistingTo != null && parsedNewFrom.after(parsedExistingTo)) {
+                                exportValidationError = Localization.get(Localization.Key.DATE_RANGE_ORDER_ERROR, language)
+                            } else {
+                                exportValidationError = null
+                            }
+                            exportFromDateText = DateTimeUtils.toBengaliNumerals(formatted)
+                        }
+                        showFromDatePicker = false
+                    },
+                    modifier = Modifier.testTag("from_date_picker_confirm_btn")
+                ) {
+                    Text(
+                        text = "ঠিক আছে",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showFromDatePicker = false },
+                    modifier = Modifier.testTag("from_date_picker_cancel_btn")
+                ) {
+                    Text("বাতিল")
+                }
+            }
+        ) {
+            DatePicker(
+                state = fromDatePickerState,
+                title = {
+                    Text(
+                        text = "শুরুর তারিখ নির্বাচন করুন",
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            )
+        }
+    }
+
+    if (showToDatePicker) {
+        val initialToMillis = remember(exportToDateText) {
+            parseDateDdMmYyyy(exportToDateText)?.time ?: System.currentTimeMillis()
+        }
+        val toSelectableDates = remember(exportFromDateText) {
+            object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    val fromDate = parseDateDdMmYyyy(exportFromDateText) ?: return true
+                    val fromCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                        time = fromDate
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    return utcTimeMillis >= fromCal.timeInMillis
+                }
+            }
+        }
+        val toDatePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialToMillis,
+            selectableDates = toSelectableDates
+        )
+        DatePickerDialog(
+            onDismissRequest = { showToDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        toDatePickerState.selectedDateMillis?.let { utcMillis ->
+                            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                                timeInMillis = utcMillis
+                            }
+                            val formatted = String.format(
+                                Locale.US,
+                                "%02d-%02d-%04d",
+                                cal.get(Calendar.DAY_OF_MONTH),
+                                cal.get(Calendar.MONTH) + 1,
+                                cal.get(Calendar.YEAR)
+                            )
+                            val parsedNewTo = parseDateDdMmYyyy(formatted)
+                            val parsedExistingFrom = parseDateDdMmYyyy(exportFromDateText)
+                            if (parsedExistingFrom != null && parsedNewTo != null && parsedExistingFrom.after(parsedNewTo)) {
+                                exportValidationError = Localization.get(Localization.Key.DATE_RANGE_ORDER_ERROR, language)
+                            } else {
+                                exportValidationError = null
+                            }
+                            exportToDateText = DateTimeUtils.toBengaliNumerals(formatted)
+                        }
+                        showToDatePicker = false
+                    },
+                    modifier = Modifier.testTag("to_date_picker_confirm_btn")
+                ) {
+                    Text(
+                        text = "ঠিক আছে",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showToDatePicker = false },
+                    modifier = Modifier.testTag("to_date_picker_cancel_btn")
+                ) {
+                    Text("বাতিল")
+                }
+            }
+        ) {
+            DatePicker(
+                state = toDatePickerState,
+                title = {
+                    Text(
+                        text = "শেষ তারিখ নির্বাচন করুন",
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            )
+        }
     }
 
     Card(
@@ -2185,34 +2197,129 @@ fun DatabaseStatusSettingsTab(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(
-                    value = exportFromDateText,
-                    onValueChange = {
-                        exportFromDateText = it
-                        exportValidationError = null
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("export_from_date_input"),
-                    label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_FROM, language), fontSize = 11.sp) },
-                    placeholder = { Text("dd-MM-yyyy", fontSize = 11.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp)
-                )
-                OutlinedTextField(
-                    value = exportToDateText,
-                    onValueChange = {
-                        exportToDateText = it
-                        exportValidationError = null
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("export_to_date_input"),
-                    label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_TO, language), fontSize = 11.sp) },
-                    placeholder = { Text("dd-MM-yyyy", fontSize = 11.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp)
-                )
+                Box(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = exportFromDateText,
+                        onValueChange = {
+                            exportFromDateText = it
+                            exportValidationError = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("export_from_date_input"),
+                        label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_FROM, language), fontSize = 11.sp) },
+                        placeholder = { Text("dd-MM-yyyy", fontSize = 11.sp) },
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (exportFromDateText.isNotBlank()) {
+                                    IconButton(
+                                        onClick = {
+                                            exportFromDateText = ""
+                                            exportValidationError = null
+                                        },
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .testTag("export_from_date_clear_btn")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "মুছে ফেলুন",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { showFromDatePicker = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("export_from_date_picker_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarToday,
+                                        contentDescription = "শুরুর তারিখ নির্বাচন করুন",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        readOnly = true,
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    // Click overlay to capture taps anywhere on the input field
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .padding(end = if (exportFromDateText.isNotBlank()) 60.dp else 36.dp)
+                            .clickable { showFromDatePicker = true }
+                    )
+                }
+
+                Box(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = exportToDateText,
+                        onValueChange = {
+                            exportToDateText = it
+                            exportValidationError = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("export_to_date_input"),
+                        label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_TO, language), fontSize = 11.sp) },
+                        placeholder = { Text("dd-MM-yyyy", fontSize = 11.sp) },
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (exportToDateText.isNotBlank()) {
+                                    IconButton(
+                                        onClick = {
+                                            exportToDateText = ""
+                                            exportValidationError = null
+                                        },
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .testTag("export_to_date_clear_btn")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "মুছে ফেলুন",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { showToDatePicker = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("export_to_date_picker_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarToday,
+                                        contentDescription = "শেষ তারিখ নির্বাচন করুন",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        readOnly = true,
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    // Click overlay to capture taps anywhere on the input field
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .padding(end = if (exportToDateText.isNotBlank()) 60.dp else 36.dp)
+                            .clickable { showToDatePicker = true }
+                    )
+                }
             }
 
             if (exportValidationError != null) {
@@ -2331,18 +2438,7 @@ private fun DbStatRow(label: String, value: String) {
     }
 }
 
-internal fun parseDateDdMmYyyy(input: String): Date? {
-    val trimmed = input.trim()
-    val parts = trimmed.split("-")
-    if (parts.size != 3) return null
-    val day = parts[0].toIntOrNull() ?: return null
-    val month = parts[1].toIntOrNull() ?: return null
-    val year = parts[2].toIntOrNull() ?: return null
-    if (day !in 1..31 || month !in 1..12 || year !in 1970..2100) return null
-    return try {
-        val sdf = SimpleDateFormat("dd-MM-yyyy", Locale.US).apply { isLenient = false }
-        sdf.parse(trimmed)
-    } catch (e: Exception) {
-        null
-    }
-}
+fun toAsciiDigits(input: String): String = DateTimeUtils.toAsciiDigits(input)
+
+fun parseDateDdMmYyyy(input: String): Date? = DateTimeUtils.parseDateDdMmYyyy(input)
+

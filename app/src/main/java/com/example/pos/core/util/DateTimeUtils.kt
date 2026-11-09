@@ -1,110 +1,163 @@
 package com.example.pos.core.util
 
+import com.example.pos.domain.FinancialCalculationEngine
+import java.text.DateFormat
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 /**
- * Robust date and time utilities for receipt timestamps, reporting periods, and live clock.
+ * DateTimeUtils formatted with Bengali numerals, Bengali month names, and AM/PM indicators.
  */
 object DateTimeUtils {
+    private val rawDateOnlyFormat = SimpleDateFormat("dd MMM yyyy", Locale.US)
+    private val rawHistoryDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+    private val rawReceiptDateFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.US)
+    private val rawTimeOnlyFormat = SimpleDateFormat("hh:mm:ss a", Locale.US)
 
-    private val receiptDateFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.US)
-    private val historyDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
-    private val timeOnlyFormat = SimpleDateFormat("hh:mm:ss a", Locale.US)
-    private val dateOnlyFormat = SimpleDateFormat("dd MMM yyyy", Locale.US)
+    private val bengaliMonths = arrayOf(
+        "জানু", "ফেব", "মার্চ", "এপ্রিল", "মে", "জুন",
+        "জুলাই", "আগস্ট", "সেপ্টে", "অক্টো", "নভে", "ডিসে"
+    )
 
-    fun formatReceiptDateTime(timestamp: Long): String {
-        return receiptDateFormat.format(Date(timestamp))
+    private val englishMonths = arrayOf(
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    )
+
+    private fun toBengaliAmPm(text: String): String {
+        return text.replace("AM", "পূর্বাহ্ন")
+            .replace("PM", "অপরাহ্ন")
+            .replace("am", "পূর্বাহ্ন")
+            .replace("pm", "অপরাহ্ন")
     }
 
-    fun formatHistoryDateTime(timestamp: Long): String {
-        return historyDateFormat.format(Date(timestamp))
+    private fun replaceMonthNamesWithBengali(text: String): String {
+        var result = text
+        for (i in englishMonths.indices) {
+            result = result.replace(englishMonths[i], bengaliMonths[i])
+        }
+        return result
     }
 
-    fun formatLiveTime(timestamp: Long = System.currentTimeMillis()): String {
-        return timeOnlyFormat.format(Date(timestamp))
+    fun toBengaliNumerals(number: String): String {
+        return FinancialCalculationEngine.toBengaliNumerals(number)
     }
 
-    fun formatDateOnly(timestamp: Long = System.currentTimeMillis()): String {
-        return dateOnlyFormat.format(Date(timestamp))
+    fun formatDateOnly(timeMillis: Long = System.currentTimeMillis()): String {
+        val formatted = rawDateOnlyFormat.format(Date(timeMillis))
+        val bnMonth = replaceMonthNamesWithBengali(formatted)
+        return FinancialCalculationEngine.toBengaliNumerals(bnMonth)
     }
 
-    fun getStartOfDay(timestamp: Long = System.currentTimeMillis()): Long {
-        val cal = java.util.Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+    fun formatHistoryDateTime(timeMillis: Long): String {
+        val formatted = rawHistoryDateFormat.format(Date(timeMillis))
+        return FinancialCalculationEngine.toBengaliNumerals(formatted)
     }
 
-    fun getStartOfWeek(timestamp: Long = System.currentTimeMillis()): Long {
-        return getStartOfDay(timestamp) - (7L * 24L * 60L * 60L * 1000L)
+    fun formatLiveTime(timeMillis: Long = System.currentTimeMillis()): String {
+        val formatted = rawTimeOnlyFormat.format(Date(timeMillis))
+        val bnAmPm = toBengaliAmPm(formatted)
+        return FinancialCalculationEngine.toBengaliNumerals(bnAmPm)
     }
 
-    fun getStartOfMonth(timestamp: Long = System.currentTimeMillis()): Long {
-        val cal = java.util.Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+    fun formatReceiptDateTime(timeMillis: Long): String {
+        val formatted = rawReceiptDateFormat.format(Date(timeMillis))
+        val bnAmPm = toBengaliAmPm(formatted)
+        return FinancialCalculationEngine.toBengaliNumerals(bnAmPm)
     }
 
-    fun getStartOfYear(timestamp: Long = System.currentTimeMillis()): Long {
-        val cal = java.util.Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(java.util.Calendar.DAY_OF_YEAR, 1)
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
-    }
-
-    fun formatPeriodKeyForDisplay(periodKey: String, language: String = "en"): String {
+    fun formatPeriodKeyForDisplay(periodKey: String, language: String = "bn"): String {
         return try {
-            when {
-                // Day format: YYYY-MM-DD
-                periodKey.matches(Regex("""\d{4}-\d{2}-\d{2}""")) -> {
-                    val sdfIn = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                    val date = sdfIn.parse(periodKey) ?: return periodKey
-                    val sdfOut = SimpleDateFormat("dd MMM", if (language == "bn") Locale("bn") else Locale.US)
-                    sdfOut.format(date)
-                }
-                // Month format: YYYY-MM
-                periodKey.matches(Regex("""\d{4}-\d{2}""")) -> {
-                    val sdfIn = SimpleDateFormat("yyyy-MM", Locale.US)
-                    val date = sdfIn.parse(periodKey) ?: return periodKey
-                    val sdfOut = SimpleDateFormat("MMM yyyy", if (language == "bn") Locale("bn") else Locale.US)
-                    sdfOut.format(date)
-                }
-                // Year format: YYYY
-                periodKey.matches(Regex("""\d{4}""")) -> periodKey
-                else -> periodKey
+            if (periodKey.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) {
+                val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val date = parser.parse(periodKey) ?: return periodKey
+                val rawFormatted = SimpleDateFormat("dd MMM", Locale.US).format(date)
+                val withBnMonth = replaceMonthNamesWithBengali(rawFormatted)
+                FinancialCalculationEngine.toBengaliNumerals(withBnMonth)
+            } else if (periodKey.matches(Regex("\\d{4}-\\d{2}"))) {
+                val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val date = parser.parse("$periodKey-01") ?: return periodKey
+                val rawFormatted = SimpleDateFormat("MMM yyyy", Locale.US).format(date)
+                val withBnMonth = replaceMonthNamesWithBengali(rawFormatted)
+                FinancialCalculationEngine.toBengaliNumerals(withBnMonth)
+            } else if (periodKey.matches(Regex("\\d{4}"))) {
+                FinancialCalculationEngine.toBengaliNumerals(periodKey)
+            } else {
+                FinancialCalculationEngine.toBengaliNumerals(periodKey)
             }
         } catch (_: Exception) {
-            periodKey
+            FinancialCalculationEngine.toBengaliNumerals(periodKey)
         }
+    }
+
+    fun getStartOfDay(timeMillis: Long = System.currentTimeMillis()): Long {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = timeMillis
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
+    fun getStartOfWeek(timeMillis: Long = System.currentTimeMillis()): Long {
+        return getStartOfDay(timeMillis) - (7L * 24L * 60L * 60L * 1000L)
+    }
+
+    fun getStartOfMonth(timeMillis: Long = System.currentTimeMillis()): Long {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = timeMillis
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
+    fun getStartOfYear(timeMillis: Long = System.currentTimeMillis()): Long {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = timeMillis
+        calendar.set(Calendar.DAY_OF_YEAR, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
+    fun toAsciiDigits(input: String): String {
+        val bnDigits = charArrayOf('০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯')
+        val sb = StringBuilder(input.length)
+        for (ch in input) {
+            val idx = bnDigits.indexOf(ch)
+            if (idx >= 0) {
+                sb.append(('0'.code + idx).toChar())
+            } else {
+                sb.append(ch)
+            }
+        }
+        return sb.toString()
     }
 
     fun parseDateDdMmYyyy(input: String): Date? {
-        val trimmed = input.trim()
-        val parts = trimmed.split("-")
+        val ascii = toAsciiDigits(input.trim())
+        val parts = ascii.split("-")
         if (parts.size != 3) return null
-        val day = parts[0].toIntOrNull() ?: return null
-        val month = parts[1].toIntOrNull() ?: return null
-        val year = parts[2].toIntOrNull() ?: return null
-        if (day !in 1..31 || month !in 1..12 || year !in 1970..2100) return null
-        return try {
-            val sdf = SimpleDateFormat("dd-MM-yyyy", Locale.US).apply { isLenient = false }
-            sdf.parse(trimmed)
-        } catch (_: Exception) {
-            null
+        val d = parts[0].toIntOrNull() ?: return null
+        val m = parts[1].toIntOrNull() ?: return null
+        val y = parts[2].toIntOrNull() ?: return null
+        if (d in 1..31 && m in 1..12 && y in 1970..2100) {
+            return try {
+                val parser = SimpleDateFormat("dd-MM-yyyy", Locale.US)
+                parser.isLenient = false
+                parser.parse(ascii)
+            } catch (_: Exception) {
+                null
+            }
         }
+        return null
     }
 }

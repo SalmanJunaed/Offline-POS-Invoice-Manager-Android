@@ -48,7 +48,7 @@ class ShadowRobolectricPdfDocument {
 }
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], shadows = [ShadowRobolectricPdfDocument::class])
+@Config(sdk = [36], shadows = [ShadowRobolectricPdfDocument::class])
 class PdfInvoiceEngineTest {
 
     private lateinit var context: Context

@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -272,6 +273,20 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             com.example.pos.domain.model.ChartDataPoint(label = label, value = value)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Analytics Due & Payment Breakdown State
+    private val _periodDueBdt = MutableStateFlow(0L)
+    val periodDueBdt: StateFlow<Long> = _periodDueBdt.asStateFlow()
+
+    val overallDueBdt: StateFlow<Long> = repository.getOverallOutstandingDue()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    private val _paymentBreakdown = MutableStateFlow<List<com.example.pos.data.db.PaymentMethodSummary>>(emptyList())
+    val paymentBreakdown: StateFlow<List<com.example.pos.data.db.PaymentMethodSummary>> = _paymentBreakdown.asStateFlow()
+
+    val totalCollectionBdt: StateFlow<Long> = _paymentBreakdown.map { list ->
+        list.sumOf { it.totalPaisa } / 100L
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
     // Detailed Receipt Popup Dialog State
     private val _isReceiptPopupOpen = MutableStateFlow(false)
@@ -635,6 +650,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             customerInfo = _customerInfo.value.ifBlank { "N/A" },
             rawTotalPaisa = rawTotal,
             roundedTotalBdt = roundedTotal,
+            isPaid = isDraftFullPaid.value,
+            paidAmountBdt = effectiveDraftPaidBdt.value,
             footerNote = "${settings?.footerNoteLine1}\n${settings?.footerNoteLine2}"
         )
         return EscPosPrinterEngine.generateReceiptText(
@@ -797,6 +814,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private var historyAggJob: Job? = null
     private var historyTopItemsJob: Job? = null
     private var historyAnalyticsJob: Job? = null
+    private var historyPeriodDueJob: Job? = null
+    private var historyPaymentBreakdownJob: Job? = null
 
     // Sales History & Reports
     fun setHistoryQuery(query: String) {
@@ -1083,6 +1102,20 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             }
             flow.collect { aggregates ->
                 _analyticsDataPoints.value = aggregates
+            }
+        }
+
+        historyPeriodDueJob?.cancel()
+        historyPeriodDueJob = viewModelScope.launch {
+            repository.getPeriodDue(query, orderId, customer, startDate, endDate).collect { due ->
+                _periodDueBdt.value = due
+            }
+        }
+
+        historyPaymentBreakdownJob?.cancel()
+        historyPaymentBreakdownJob = viewModelScope.launch {
+            repository.getPaymentMethodBreakdownFiltered(startDate, endDate).collect { breakdown ->
+                _paymentBreakdown.value = breakdown
             }
         }
     }

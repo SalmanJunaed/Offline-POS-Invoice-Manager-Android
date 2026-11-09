@@ -307,6 +307,24 @@ class PosRepository(
         return history.getSalesByYear(query, orderIdFilter, customerFilter, startDate, endDate)
     }
 
+    fun getPeriodDue(
+        query: String = "",
+        orderIdFilter: String = "",
+        customerFilter: String = "",
+        startDate: Long,
+        endDate: Long
+    ): Flow<Long> {
+        return history.getPeriodDue(query, orderIdFilter, customerFilter, startDate, endDate)
+    }
+
+    fun getOverallOutstandingDue(): Flow<Long> {
+        return history.getOverallOutstandingDue()
+    }
+
+    fun getPaymentMethodBreakdownFiltered(startDate: Long, endDate: Long): Flow<List<com.example.pos.data.db.PaymentMethodSummary>> {
+        return payments.getPaymentMethodBreakdownFiltered(startDate, endDate)
+    }
+
     fun getLinesForOrder(orderId: String): Flow<List<InvoiceLineEntity>> {
         return invoiceDao.getLinesForOrderFlow(orderId)
     }

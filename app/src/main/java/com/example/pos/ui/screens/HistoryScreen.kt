@@ -110,6 +110,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.pos.core.util.BengaliTransliterationEngine
 import com.example.pos.core.util.DateTimeUtils
 import com.example.pos.data.Localization
 import com.example.pos.data.db.InvoiceEntity
@@ -128,6 +129,27 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.min
+
+fun formatHistoryDateTimeBn(timeMillis: Long): String {
+    val rawFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US)
+    val formatted = rawFormat.format(Date(timeMillis))
+    var s = formatted
+    val monthMap = listOf(
+        "January" to "জানুয়ারি", "February" to "ফেব্রুয়ারি", "March" to "মার্চ",
+        "April" to "এপ্রিল", "May" to "মে", "June" to "জুন",
+        "July" to "জুলাই", "August" to "আগস্ট", "September" to "সেপ্টেম্বর",
+        "October" to "অক্টোবর", "November" to "নভেম্বর", "December" to "ডিসেম্বর",
+        "Jan" to "জানু", "Feb" to "ফেব", "Mar" to "মার্চ", "Apr" to "এপ্রিল",
+        "Jun" to "জুন", "Jul" to "জুলাই", "Aug" to "আগস্ট", "Sep" to "সেপ্টে",
+        "Oct" to "অক্টো", "Nov" to "নভে", "Dec" to "ডিসে"
+    )
+    for ((enM, bnM) in monthMap) {
+        s = s.replace(enM, bnM)
+    }
+    s = s.replace("AM", "পূর্বাহ্ন").replace("PM", "অপরাহ্ন")
+        .replace("am", "পূর্বাহ্ন").replace("pm", "অপরাহ্ন")
+    return DateTimeUtils.toBengaliNumerals(s)
+}
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -172,6 +194,11 @@ fun HistoryScreen(
     val analyticsMetric by viewModel.analyticsMetric.collectAsState()
     val analyticsDataPoints by viewModel.analyticsDataPoints.collectAsState()
     val chartDataPoints by viewModel.chartDataPoints.collectAsState()
+
+    val periodDueBdt by viewModel.periodDueBdt.collectAsState()
+    val overallDueBdt by viewModel.overallDueBdt.collectAsState()
+    val paymentBreakdown by viewModel.paymentBreakdown.collectAsState()
+    val totalCollectionBdt by viewModel.totalCollectionBdt.collectAsState()
 
     var activeHistoryTab by remember { mutableStateOf(0) }
 
@@ -350,7 +377,7 @@ fun HistoryScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.Clear,
-                                                        contentDescription = "Clear",
+                                                        contentDescription = "মুছুন",
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                 }
@@ -381,21 +408,21 @@ fun HistoryScreen(
                                     modifier = Modifier
                                         .height(42.dp)
                                         .testTag("sort_menu_btn")
-                                ) {
+                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Sort,
-                                        contentDescription = "Sort",
+                                        contentDescription = "সর্ট",
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = when (sortOption) {
-                                            HistorySortOption.DATE_DESC -> if (language == "bn") "তারিখ ↓" else "Date ↓"
-                                            HistorySortOption.DATE_ASC -> if (language == "bn") "তারিখ ↑" else "Date ↑"
-                                            HistorySortOption.AMOUNT_DESC -> if (language == "bn") "টাকা ↓" else "BDT ↓"
-                                            HistorySortOption.AMOUNT_ASC -> if (language == "bn") "টাকা ↑" else "BDT ↑"
-                                            HistorySortOption.ORDER_ID_DESC -> if (language == "bn") "আইডি Z-A" else "ID Z-A"
-                                            HistorySortOption.ORDER_ID_ASC -> if (language == "bn") "আইডি A-Z" else "ID A-Z"
+                                            HistorySortOption.DATE_DESC -> "তারিখ ↓"
+                                            HistorySortOption.DATE_ASC -> "তারিখ ↑"
+                                            HistorySortOption.AMOUNT_DESC -> "টাকা ↓"
+                                            HistorySortOption.AMOUNT_ASC -> "টাকা ↑"
+                                            HistorySortOption.ORDER_ID_DESC -> "আইডি Z-A"
+                                            HistorySortOption.ORDER_ID_ASC -> "আইডি A-Z"
                                         },
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold
@@ -493,7 +520,7 @@ fun HistoryScreen(
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
-                                                text = suggestionId,
+                                                text = DateTimeUtils.toBengaliNumerals(suggestionId),
                                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                                             )
@@ -531,7 +558,7 @@ fun HistoryScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.CalendarToday,
-                                        contentDescription = "Date Filter",
+                                        contentDescription = "তারিখ ফিল্টার",
                                         modifier = Modifier.size(16.dp),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
@@ -667,11 +694,11 @@ fun HistoryScreen(
                                                 val parsedStart = DateTimeUtils.parseDateDdMmYyyy(newValue)
                                                 val parsedEnd = if (customEndDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customEndDateText) else null
                                                 if (newValue.isNotBlank() && parsedStart == null) {
-                                                    customDateErrorText = "Invalid start date (dd-MM-yyyy)"
+                                                    customDateErrorText = "শুরুর তারিখটি সঠিক নয় (দিন-মাস-সাল)"
                                                 } else if (parsedStart != null && customEndDateText.isNotBlank() && parsedEnd == null) {
-                                                    customDateErrorText = "Invalid end date (dd-MM-yyyy)"
+                                                    customDateErrorText = "শেষের তারিখটি সঠিক নয় (দিন-মাস-সাল)"
                                                 } else if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
-                                                    customDateErrorText = "End date cannot be earlier than start date"
+                                                    customDateErrorText = "শেষ তারিখ শুরুর তারিখের আগের হতে পারে না"
                                                 } else if (parsedStart != null) {
                                                     customDateErrorText = null
                                                     viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
@@ -682,8 +709,8 @@ fun HistoryScreen(
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .testTag("custom_date_from_input"),
-                                            label = { Text(if (language == "bn") "শুরুর তারিখ" else "Start Date", fontSize = 10.sp) },
-                                            placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                                            label = { Text("শুরুর তারিখ", fontSize = 10.sp) },
+                                            placeholder = { Text("দিন-মাস-সাল", fontSize = 10.sp) },
                                             trailingIcon = {
                                                 IconButton(
                                                     onClick = {
@@ -692,7 +719,7 @@ fun HistoryScreen(
                                                             val parsedStart = DateTimeUtils.parseDateDdMmYyyy(selected)
                                                             val parsedEnd = if (customEndDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customEndDateText) else null
                                                             if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
-                                                                customDateErrorText = "End date cannot be earlier than start date"
+                                                                customDateErrorText = "শেষ তারিখ শুরুর তারিখের আগের হতে পারে না"
                                                             } else if (parsedStart != null) {
                                                                 customDateErrorText = null
                                                                 viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
@@ -703,7 +730,7 @@ fun HistoryScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.CalendarToday,
-                                                        contentDescription = "Select Start Date",
+                                                        contentDescription = "শুরুর তারিখ নির্বাচন করুন",
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                 }
@@ -719,11 +746,11 @@ fun HistoryScreen(
                                                 val parsedStart = if (customStartDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customStartDateText) else null
                                                 val parsedEnd = DateTimeUtils.parseDateDdMmYyyy(newValue)
                                                 if (newValue.isNotBlank() && parsedEnd == null) {
-                                                    customDateErrorText = "Invalid end date (dd-MM-yyyy)"
+                                                    customDateErrorText = "শেষের তারিখটি সঠিক নয় (দিন-মাস-সাল)"
                                                 } else if (parsedStart == null && customStartDateText.isNotBlank()) {
-                                                    customDateErrorText = "Invalid start date (dd-MM-yyyy)"
+                                                    customDateErrorText = "শুরুর তারিখটি সঠিক নয় (দিন-মাস-সাল)"
                                                 } else if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
-                                                    customDateErrorText = "End date cannot be earlier than start date"
+                                                    customDateErrorText = "শেষ তারিখ শুরুর তারিখের আগের হতে পারে না"
                                                 } else if (parsedStart != null) {
                                                     customDateErrorText = null
                                                     viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
@@ -739,8 +766,8 @@ fun HistoryScreen(
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .testTag("custom_date_to_input"),
-                                            label = { Text(if (language == "bn") "শেষ তারিখ (ঐচ্ছিক)" else "End Date (Optional)", fontSize = 10.sp) },
-                                            placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                                            label = { Text("শেষ তারিখ (ঐচ্ছিক)", fontSize = 10.sp) },
+                                            placeholder = { Text("দিন-মাস-সাল", fontSize = 10.sp) },
                                             trailingIcon = {
                                                 IconButton(
                                                     onClick = {
@@ -749,7 +776,7 @@ fun HistoryScreen(
                                                             val parsedStart = if (customStartDateText.isNotBlank()) DateTimeUtils.parseDateDdMmYyyy(customStartDateText) else null
                                                             val parsedEnd = DateTimeUtils.parseDateDdMmYyyy(selected)
                                                             if (parsedStart != null && parsedEnd != null && parsedEnd.before(parsedStart)) {
-                                                                customDateErrorText = "End date cannot be earlier than start date"
+                                                                customDateErrorText = "শেষ তারিখ শুরুর তারিখের আগের হতে পারে না"
                                                             } else if (parsedStart != null) {
                                                                 customDateErrorText = null
                                                                 viewModel.setCustomDateRange(parsedStart.time, parsedEnd?.time)
@@ -760,7 +787,7 @@ fun HistoryScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.CalendarToday,
-                                                        contentDescription = "Select End Date",
+                                                        contentDescription = "শেষ তারিখ নির্বাচন করুন",
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                 }
@@ -877,11 +904,14 @@ fun HistoryScreen(
                             text = "${Localization.get(Localization.Key.HISTORY_TITLE, language)}",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
+                        val startRecordBn = DateTimeUtils.toBengaliNumerals(startRecord.toString())
+                        val endRecordBn = DateTimeUtils.toBengaliNumerals(endRecord.toString())
+                        val totalCountBn = DateTimeUtils.toBengaliNumerals(totalCount.toString())
                         Text(
                             text = if (totalCount > 0) {
-                                "Showing $startRecord-$endRecord of $totalCount"
+                                "দেখাচ্ছে $startRecordBn-$endRecordBn, মোট $totalCountBn টি"
                             } else {
-                                "0 records"
+                                "০ টি রেকর্ড"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -890,12 +920,12 @@ fun HistoryScreen(
 
                     // Page Size Selector
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Size: ", style = MaterialTheme.typography.labelSmall)
+                        Text("পৃষ্ঠা সাইজ: ", style = MaterialTheme.typography.labelSmall)
                         listOf(25, 50, 100).forEach { size ->
                             FilterChip(
                                 selected = pageSize == size,
                                 onClick = { viewModel.setPageSize(size) },
-                                label = { Text("$size", fontSize = 11.sp) },
+                                label = { Text(DateTimeUtils.toBengaliNumerals(size.toString()), fontSize = 11.sp) },
                                 modifier = Modifier
                                     .padding(horizontal = 2.dp)
                                     .height(32.dp)
@@ -1002,15 +1032,17 @@ fun HistoryScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Previous Page",
+                                    contentDescription = "পূর্ববর্তী পৃষ্ঠা",
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(Localization.get(Localization.Key.BTN_PREV_PAGE, language), fontSize = 11.sp)
                             }
 
+                            val currentPgBn = DateTimeUtils.toBengaliNumerals((currentPage + 1).toString())
+                            val totalPgsBn = DateTimeUtils.toBengaliNumerals(totalPages.toString())
                             Text(
-                                text = "${Localization.get(Localization.Key.PAGE_LABEL, language)} ${currentPage + 1} / $totalPages",
+                                text = "${Localization.get(Localization.Key.PAGE_LABEL, language)} $currentPgBn / $totalPgsBn",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                             )
 
@@ -1025,7 +1057,7 @@ fun HistoryScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "Next Page",
+                                    contentDescription = "পরবর্তী পৃষ্ঠা",
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -1035,34 +1067,31 @@ fun HistoryScreen(
             }
         }
     } else {
-        LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f)
-                    .padding(horizontal = 12.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
-            ) {
-                item {
-                    AnalyticsDashboardView(
-                        language = language,
-                        dateFilter = dateFilter,
-                        analyticsGrouping = analyticsGrouping,
-                        analyticsMetric = analyticsMetric,
-                        analyticsDataPoints = analyticsDataPoints,
-                        chartDataPoints = chartDataPoints,
-                        aggregatedOrders = aggregatedOrders,
-                        aggregatedRawPaisa = aggregatedRawPaisa,
-                        aggregatedRoundedBdt = aggregatedRoundedBdt,
-                        topSellingItems = topSellingItems,
-                        onSelectDateFilter = { viewModel.setDateFilter(it) },
-                        onOpenCustomDateDialog = { showCustomDateDialog = true },
-                        onSelectGrouping = { viewModel.setAnalyticsGrouping(it) },
-                        onSelectMetric = { viewModel.setAnalyticsMetric(it) }
-                    )
-                }
-            }
-        }
+        AnalyticsDashboardView(
+            language = language,
+            dateFilter = dateFilter,
+            analyticsGrouping = analyticsGrouping,
+            analyticsMetric = analyticsMetric,
+            analyticsDataPoints = analyticsDataPoints,
+            chartDataPoints = chartDataPoints,
+            aggregatedOrders = aggregatedOrders,
+            aggregatedRawPaisa = aggregatedRawPaisa,
+            aggregatedRoundedBdt = aggregatedRoundedBdt,
+            topSellingItems = topSellingItems,
+            periodDueBdt = periodDueBdt,
+            overallDueBdt = overallDueBdt,
+            paymentBreakdown = paymentBreakdown,
+            totalCollectionBdt = totalCollectionBdt,
+            onSelectDateFilter = { viewModel.setDateFilter(it) },
+            onOpenCustomDateDialog = { showCustomDateDialog = true },
+            onSelectGrouping = { viewModel.setAnalyticsGrouping(it) },
+            onSelectMetric = { viewModel.setAnalyticsMetric(it) },
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+        )
     }
+}
 
     // Floating Action Button for New Invoice (inside BoxScope)
     FloatingActionButton(
@@ -1076,7 +1105,7 @@ fun HistoryScreen(
         ) {
             Icon(
                 imageVector = Icons.Default.Add,
-                contentDescription = "New Invoice"
+                contentDescription = "নতুন ইনভয়েস"
             )
         }
     }
@@ -1162,13 +1191,9 @@ fun HistoryScreen(
                 )
             },
             text = {
-                val isBn = language == "bn"
+                val orderIdBn = DateTimeUtils.toBengaliNumerals(target.orderId)
                 Text(
-                    text = if (isBn) {
-                        "আপনি কি নিশ্চিত যে ভাউচার #${target.orderId} মুছে ফেলতে চান?\nএই পরিবর্তনটি আর পূর্বাবস্থায় ফিরিয়ে আনা যাবে না।"
-                    } else {
-                        "Are you sure you want to delete voucher #${target.orderId}?\nThis action cannot be undone."
-                    },
+                    text = "আপনি কি নিশ্চিত যে ভাউচার #$orderIdBn মুছে ফেলতে চান?\nএই পরিবর্তনটি আর পূর্বাবস্থায় ফিরিয়ে আনা যাবে না।",
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -1276,8 +1301,7 @@ fun HistoryInvoiceCard(
     onDelete: () -> Unit = {},
     onEdit: () -> Unit = {}
 ) {
-    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
-    val formattedDate = remember(invoice.dateTime) { dateFormat.format(Date(invoice.dateTime)) }
+    val formattedDate = remember(invoice.dateTime) { formatHistoryDateTimeBn(invoice.dateTime) }
     val isBn = language == "bn"
     val dueAmountBdt = invoice.roundedTotalBdt - invoice.paidAmountBdt
 
@@ -1304,7 +1328,7 @@ fun HistoryInvoiceCard(
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Text(
-                            text = "#${invoice.orderId}",
+                            text = "#${DateTimeUtils.toBengaliNumerals(invoice.orderId)}",
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                         )
@@ -1312,11 +1336,7 @@ fun HistoryInvoiceCard(
                     Spacer(modifier = Modifier.width(6.dp))
 
                     // Material 3 Status Badge (Green Paid / Red Due)
-                    val badgeText = if (invoice.isPaid) {
-                        if (isBn) "পরিশোধ" else "PAID"
-                    } else {
-                        if (isBn) "বাকি" else "DUE"
-                    }
+                    val badgeText = if (invoice.isPaid) "পরিশোধিত" else "বকেয়া"
                     val badgeColor = if (invoice.isPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
 
                     Surface(
@@ -1338,7 +1358,7 @@ fun HistoryInvoiceCard(
                         color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Text(
-                            text = "Branch: ${invoice.branchCode}",
+                            text = "শাখা: ${DateTimeUtils.toBengaliNumerals(invoice.branchCode)}",
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp)
                         )
@@ -1349,7 +1369,7 @@ fun HistoryInvoiceCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)} ৳",
+                            text = "${DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt))} ৳",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -1357,7 +1377,7 @@ fun HistoryInvoiceCard(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (isBn) "জমা: ${invoice.paidAmountBdt} ৳" else "Paid: ${invoice.paidAmountBdt} ৳",
+                                text = "জমা: ${DateTimeUtils.toBengaliNumerals(invoice.paidAmountBdt.toString())} ৳",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 11.sp,
@@ -1368,7 +1388,7 @@ fun HistoryInvoiceCard(
                             if (!invoice.isPaid || dueAmountBdt > 0) {
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (isBn) "বাকি: $dueAmountBdt ৳" else "Due: $dueAmountBdt ৳",
+                                    text = "বাকি: ${DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())} ৳",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 11.sp,
@@ -1386,7 +1406,7 @@ fun HistoryInvoiceCard(
                     ) {
                         Icon(
                             imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = "Expand",
+                            contentDescription = "প্রসারিত করুন",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -1412,8 +1432,13 @@ fun HistoryInvoiceCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(4.dp))
+                    val customerDisplayName = if (invoice.customerInfo.isNotBlank()) {
+                        DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(invoice.customerInfo))
+                    } else {
+                        "(ওয়াক-ইন কাস্টমার)"
+                    }
                     Text(
-                        text = if (invoice.customerInfo.isNotBlank()) invoice.customerInfo else "(Walk-in Customer)",
+                        text = customerDisplayName,
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -1436,15 +1461,17 @@ fun HistoryInvoiceCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val opBn = BengaliTransliterationEngine.transliterate(invoice.operatorName)
                     Text(
-                        text = "Op: ${invoice.operatorName}",
+                        text = "অপারেটর: $opBn",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 if (lines.isNotEmpty()) {
+                    val itemsCountBn = DateTimeUtils.toBengaliNumerals(lines.size.toString())
                     Text(
-                        text = "${lines.size} ${Localization.get(Localization.Key.ITEMS_COUNT, language)}",
+                        text = "$itemsCountBn টি পণ্য",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.secondary
                     )
@@ -1471,7 +1498,7 @@ fun HistoryInvoiceCard(
 
                     if (lines.isEmpty()) {
                         Text(
-                            text = "Loading items...",
+                            text = "পণ্য লোড হচ্ছে...",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.Gray
                         )
@@ -1486,17 +1513,21 @@ fun HistoryInvoiceCard(
                             ) {
                                 Column(modifier = Modifier.weight(1.5f)) {
                                     Text(
-                                        text = line.itemName,
+                                        text = BengaliTransliterationEngine.transliterate(line.itemName),
                                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
                                     )
+                                    val qtyBn = DateTimeUtils.toBengaliNumerals(line.quantityStr)
+                                    val unitBn = localizeUnit(line.unit)
+                                    val rateBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa))
                                     Text(
-                                        text = "${line.quantityStr} ${line.unit} @ ${FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa)} ৳",
+                                        text = "$qtyBn $unitBn @ $rateBn ৳",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                val lineTotalBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(line.lineTotalPaisa))
                                 Text(
-                                    text = "${FinancialCalculationEngine.formatPaisaToBdt(line.lineTotalPaisa)} ৳",
+                                    text = "$lineTotalBn ৳",
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
                                 )
                             }
@@ -1511,28 +1542,33 @@ fun HistoryInvoiceCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        val rawSubtotalBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa))
+                        val roundedPayableBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt))
                         Text(
-                            text = "Raw Subtotal: ${FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)} ৳",
+                            text = "মোট সাবটোটাল: $rawSubtotalBn ৳",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Rounded Payable: ${FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)} ৳",
+                            text = "সর্বমোট প্রদেয়: $roundedPayableBn ৳",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
 
                     val roundingDiff = (invoice.roundedTotalBdt * 100L) - invoice.rawTotalPaisa
+                    val roundingSign = if (roundingDiff >= 0) "+" else ""
+                    val roundingDiffBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(roundingDiff))
                     Text(
-                        text = "Rounding Adjustment: ${if (roundingDiff >= 0) "+" else ""}${FinancialCalculationEngine.formatPaisaToBdt(roundingDiff)} ৳",
+                        text = "রাউন্ডিং সমন্বয়: $roundingSign$roundingDiffBn ৳",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Spacer(modifier = Modifier.height(2.dp))
+                    val gtxIdBn = DateTimeUtils.toBengaliNumerals(invoice.globalTransactionId)
                     Text(
-                        text = "Global Transaction ID: ${invoice.globalTransactionId}",
+                        text = "গ্লোবাল ট্রানজেকশন আইডি: $gtxIdBn",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.outline
                     )
@@ -1575,23 +1611,25 @@ fun ReceiptDetailsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        val invoiceTitle = if (language == "bn") "ইনভয়েস #${invoice.orderId}" else "Invoice #${invoice.orderId}"
-                        val walkInLabel = if (language == "bn") Localization.get(Localization.Key.VOUCHER_WALK_IN, "bn") else Localization.get(Localization.Key.VOUCHER_WALK_IN, "en")
-                        val customerLabel = if (language == "bn") Localization.get(Localization.Key.VOUCHER_CUSTOMER, "bn") else Localization.get(Localization.Key.VOUCHER_CUSTOMER, "en")
-                        val customerVal = if (invoice.customerInfo.isNotBlank()) invoice.customerInfo else walkInLabel
+                        val invoiceTitle = "ইনভয়েস #${DateTimeUtils.toBengaliNumerals(invoice.orderId)}"
+                        val customerVal = if (invoice.customerInfo.isNotBlank()) {
+                            DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(invoice.customerInfo))
+                        } else {
+                            "ওয়াক-ইন কাস্টমার"
+                        }
                         Text(
                             text = invoiceTitle,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "$customerLabel: $customerVal",
+                            text = "গ্রাহক: $customerVal",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
                     IconButton(onClick = onClose) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "বন্ধ করুন")
                     }
                 }
 
@@ -1638,7 +1676,7 @@ fun ReceiptDetailsDialog(
                                     )
                                 } else {
                                     Text(
-                                        text = "LOGO",
+                                        text = "লোগো",
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp,
@@ -1656,7 +1694,7 @@ fun ReceiptDetailsDialog(
 
                             if (receiptText.isBlank()) {
                                 Text(
-                                    text = if (language == "bn") "ভাউচার লোড হচ্ছে..." else "Loading receipt text...",
+                                    text = "ভাউচার লোড হচ্ছে...",
                                     modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = receiptFontSize,
@@ -1717,11 +1755,11 @@ fun ReceiptDetailsDialog(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PictureAsPdf,
-                                contentDescription = "PDF",
+                                contentDescription = "পিডিএফ",
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (language == "bn") "পিডিএফ" else "PDF")
+                            Text("পিডিএফ")
                         }
                     }
                 }
@@ -1814,7 +1852,7 @@ fun CustomDateRangeDialog(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.CalendarToday,
-                                    contentDescription = "Select Start Date",
+                                    contentDescription = "শুরুর তারিখ নির্বাচন করুন",
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -1832,7 +1870,7 @@ fun CustomDateRangeDialog(
                             errorMessage = null
                         },
                         label = { Text(Localization.get(Localization.Key.CUSTOM_DATE_TO, language), fontSize = 10.sp) },
-                        placeholder = { Text("dd-MM-yyyy", fontSize = 10.sp) },
+                        placeholder = { Text("দিন-মাস-সাল", fontSize = 10.sp) },
                         trailingIcon = {
                             IconButton(
                                 onClick = {
@@ -1845,7 +1883,7 @@ fun CustomDateRangeDialog(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.CalendarToday,
-                                    contentDescription = "Select End Date",
+                                    contentDescription = "শেষ তারিখ নির্বাচন করুন",
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -1923,7 +1961,7 @@ fun EditInvoiceDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "${Localization.get(Localization.Key.EDIT_INVOICE_TITLE, language)} #${invoice.orderId}",
+                text = "${Localization.get(Localization.Key.EDIT_INVOICE_TITLE, language)} #${DateTimeUtils.toBengaliNumerals(invoice.orderId)}",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
         },
@@ -1942,7 +1980,7 @@ fun EditInvoiceDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Total: ৳${invoice.roundedTotalBdt}",
+                            text = "সর্বমোট: ৳${DateTimeUtils.toBengaliNumerals(invoice.roundedTotalBdt.toString())}",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -1998,9 +2036,7 @@ fun InvoiceDetailsDialog(
     onDelete: () -> Unit,
     onSettleDue: (Long) -> Unit = {}
 ) {
-    val isBn = language == "bn"
-    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US) }
-    val formattedDate = remember(invoice.dateTime) { dateFormat.format(Date(invoice.dateTime)) }
+    val formattedDate = remember(invoice.dateTime) { formatHistoryDateTimeBn(invoice.dateTime) }
     val dueAmountBdt = invoice.roundedTotalBdt - invoice.paidAmountBdt
 
     var showSettleDueDialog by remember { mutableStateOf(false) }
@@ -2031,7 +2067,7 @@ fun InvoiceDetailsDialog(
                 ) {
                     Column {
                         Text(
-                            text = if (isBn) "ইনভয়েস বিস্তারিত #${invoice.orderId}" else "Invoice Details #${invoice.orderId}",
+                            text = "ইনভয়েস বিস্তারিত #${DateTimeUtils.toBengaliNumerals(invoice.orderId)}",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
@@ -2041,7 +2077,7 @@ fun InvoiceDetailsDialog(
                         )
                     }
                     IconButton(onClick = onDismiss) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "বন্ধ করুন")
                     }
                 }
 
@@ -2059,19 +2095,16 @@ fun InvoiceDetailsDialog(
                         modifier = Modifier.testTag("details_status_badge_${invoice.orderId}")
                     ) {
                         Text(
-                            text = if (invoice.isPaid) {
-                                if (isBn) "পরিশোধিত (PAID)" else "PAID"
-                            } else {
-                                if (isBn) "বাকি (DUE)" else "DUE"
-                            },
+                            text = if (invoice.isPaid) "পরিশোধিত" else "বকেয়া",
                             color = Color.White,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
                         )
                     }
 
+                    val opBn = BengaliTransliterationEngine.transliterate(invoice.operatorName)
                     Text(
-                        text = "Op: ${invoice.operatorName}",
+                        text = "অপারেটর: $opBn",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2086,14 +2119,19 @@ fun InvoiceDetailsDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
+                        val custBn = if (invoice.customerInfo.isNotBlank()) {
+                            DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(invoice.customerInfo))
+                        } else {
+                            "ওয়াক-ইন কাস্টমার"
+                        }
                         Text(
-                            text = "${if (isBn) "ক্রেতা" else "Customer"}: ${if (invoice.customerInfo.isNotBlank()) invoice.customerInfo else if (isBn) "সাধারণ ক্রেতা" else "Walk-in"}",
+                            text = "গ্রাহক: $custBn",
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
                         )
                         if (invoice.footerNote.isNotBlank()) {
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${if (isBn) "নোট" else "Note"}: ${invoice.footerNote}",
+                                text = "নোট: ${BengaliTransliterationEngine.transliterate(invoice.footerNote)}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2107,7 +2145,7 @@ fun InvoiceDetailsDialog(
 
                 // Itemized lines
                 Text(
-                    text = if (isBn) "পণ্য / সেবাসমূহ" else "Itemized Lines",
+                    text = "পণ্য / সেবাসমূহ",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -2115,7 +2153,7 @@ fun InvoiceDetailsDialog(
 
                 if (lines.isEmpty()) {
                     Text(
-                        text = if (isBn) "লোড হচ্ছে..." else "Loading items...",
+                        text = "পণ্য লোড হচ্ছে...",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray
                     )
@@ -2130,17 +2168,21 @@ fun InvoiceDetailsDialog(
                         ) {
                             Column(modifier = Modifier.weight(1.5f)) {
                                 Text(
-                                    text = line.itemName,
+                                    text = BengaliTransliterationEngine.transliterate(line.itemName),
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
                                 )
+                                val qtyBn = DateTimeUtils.toBengaliNumerals(line.quantityStr)
+                                val unitBn = localizeUnit(line.unit)
+                                val rateBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa))
                                 Text(
-                                    text = "${line.quantityStr} ${line.unit} @ ${FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa)} ৳",
+                                    text = "$qtyBn $unitBn @ $rateBn ৳",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            val lineTotalBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(line.lineTotalPaisa))
                             Text(
-                                text = "${FinancialCalculationEngine.formatPaisaToBdt(line.lineTotalPaisa)} ৳",
+                                text = "$lineTotalBn ৳",
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
                             )
                         }
@@ -2152,37 +2194,41 @@ fun InvoiceDetailsDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Financial Breakdown (Raw subtotal, rounded payable, rounding adjustment, paid, due)
+                val rawSubtotalBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = if (isBn) "মোট সাবটোটাল:" else "Raw Subtotal:", style = MaterialTheme.typography.bodySmall)
-                    Text(text = "${FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)} ৳", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "মোট সাবটোটাল:", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "$rawSubtotalBn ৳", style = MaterialTheme.typography.bodySmall)
                 }
 
                 val roundingDiff = (invoice.roundedTotalBdt * 100L) - invoice.rawTotalPaisa
+                val roundingSign = if (roundingDiff >= 0) "+" else ""
+                val roundingDiffBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(roundingDiff))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = if (isBn) "রাউন্ডিং সমন্বয়:" else "Rounding Adjustment:", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "রাউন্ডিং সমন্বয়:", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        text = "${if (roundingDiff >= 0) "+" else ""}${FinancialCalculationEngine.formatPaisaToBdt(roundingDiff)} ৳",
+                        text = "$roundingSign$roundingDiffBn ৳",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
 
+                val roundedPayableBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (isBn) "সর্বমোট প্রদেয়:" else "Rounded Payable:",
+                        text = "সর্বমোট প্রদেয়:",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "${FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)} ৳",
+                        text = "$roundedPayableBn ৳",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -2191,13 +2237,14 @@ fun InvoiceDetailsDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 // Paid & Due Breakdown
+                val paidBn = DateTimeUtils.toBengaliNumerals(invoice.paidAmountBdt.toString())
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = if (isBn) "পরিশোধিত (Paid):" else "Paid Amount:", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
+                    Text(text = "পরিশোধিত (জমা):", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
                     Text(
-                        text = "${invoice.paidAmountBdt} ৳",
+                        text = "$paidBn ৳",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = if (invoice.isPaid) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface
@@ -2205,13 +2252,14 @@ fun InvoiceDetailsDialog(
                     )
                 }
 
+                val dueBn = DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = if (isBn) "বাকি (Due):" else "Remaining Due:", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
+                    Text(text = "বাকি (বকেয়া):", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
                     Text(
-                        text = "$dueAmountBdt ৳",
+                        text = "$dueBn ৳",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = if (dueAmountBdt > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
@@ -2233,7 +2281,7 @@ fun InvoiceDetailsDialog(
                 ) {
                     Icon(imageVector = Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isBn) "প্রিভিউ ও প্রিন্ট" else "Preview / Print")
+                    Text("প্রিভিউ ও প্রিন্ট")
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2253,7 +2301,7 @@ fun InvoiceDetailsDialog(
                     ) {
                         Icon(imageVector = Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isBn) "পিডিএফ" else "PDF", fontSize = 12.sp)
+                        Text("পিডিএফ", fontSize = 12.sp)
                     }
 
                     OutlinedButton(
@@ -2266,7 +2314,7 @@ fun InvoiceDetailsDialog(
                     ) {
                         Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isBn) "এডিট" else "Edit", fontSize = 12.sp)
+                        Text("এডিট", fontSize = 12.sp)
                     }
                 }
 
@@ -2309,7 +2357,7 @@ fun InvoiceDetailsDialog(
                         Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isBn) "বকেয়া পরিশোধ" else "Settle Due",
+                            text = "বকেয়া পরিশোধ",
                             fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
@@ -2328,19 +2376,22 @@ fun InvoiceDetailsDialog(
             modifier = Modifier.testTag("due_settlement_dialog"),
             title = {
                 Text(
-                    text = if (isBn) "বকেয়া পরিশোধ #${invoice.orderId}" else "Settle Due #${invoice.orderId}",
+                    text = "বকেয়া পরিশোধ #${DateTimeUtils.toBengaliNumerals(invoice.orderId)}",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    val totalBn = DateTimeUtils.toBengaliNumerals(invoice.roundedTotalBdt.toString())
+                    val paidBn = DateTimeUtils.toBengaliNumerals(invoice.paidAmountBdt.toString())
+                    val dueBn = DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())
                     Text(
-                        text = if (isBn) "সর্বমোট: ${invoice.roundedTotalBdt} ৳ | পরিশোধিত: ${invoice.paidAmountBdt} ৳" else "Total: ${invoice.roundedTotalBdt} ৳ | Paid: ${invoice.paidAmountBdt} ৳",
+                        text = "সর্বমোট: $totalBn ৳ | পরিশোধিত: $paidBn ৳",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (isBn) "বর্তমান বকেয়া: $dueAmountBdt ৳" else "Remaining Due: $dueAmountBdt ৳",
+                        text = "বর্তমান বকেয়া: $dueBn ৳",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -2350,7 +2401,7 @@ fun InvoiceDetailsDialog(
                             settleAmountInput = it
                             settleError = null
                         },
-                        label = { Text(if (isBn) "পরিশোধের পরিমাণ (৳)" else "Payment Amount (৳)") },
+                        label = { Text("পরিশোধের পরিমাণ (৳)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         isError = settleError != null,
@@ -2365,10 +2416,11 @@ fun InvoiceDetailsDialog(
                 Button(
                     onClick = {
                         val parsed = settleAmountInput.trim().toLongOrNull()
+                        val dueBn = DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())
                         if (parsed == null || parsed <= 0) {
-                            settleError = if (isBn) "সঠিক পরিমাণ লিখুন" else "Enter a valid positive amount"
+                            settleError = "সঠিক পরিমাণ লিখুন"
                         } else if (parsed > dueAmountBdt) {
-                            settleError = if (isBn) "পরিমাণ বকেয়ার ($dueAmountBdt ৳) চেয়ে বেশি হতে পারে না" else "Amount cannot exceed due ($dueAmountBdt ৳)"
+                            settleError = "পরিমাণ বকেয়ার ($dueBn ৳) চেয়ে বেশি হতে পারে না"
                         } else {
                             showSettleDueDialog = false
                             settleError = null
@@ -2378,7 +2430,7 @@ fun InvoiceDetailsDialog(
                     modifier = Modifier.testTag("confirm_due_settlement_btn"),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text(if (isBn) "পরিশোধ নিশ্চিত করুন" else "Confirm Payment")
+                    Text("পরিশোধ নিশ্চিত করুন")
                 }
             },
             dismissButton = {

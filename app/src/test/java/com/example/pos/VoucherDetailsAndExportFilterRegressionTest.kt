@@ -116,7 +116,7 @@ class VoucherDetailsAndExportFilterRegressionTest {
         // 3. Both buttons should use available width properly (near identical width)
         val deleteWidth = (deleteBounds.right - deleteBounds.left).value
         val pdfWidth = (pdfBounds.right - pdfBounds.left).value
-        assertEquals(deleteWidth, pdfWidth, 2f)
+        assertTrue("Widths should be nearly identical", Math.abs(deleteWidth - pdfWidth) <= 2f)
     }
 
     @Test

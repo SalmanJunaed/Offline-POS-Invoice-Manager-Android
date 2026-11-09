@@ -1,25 +1,17 @@
 package com.example.pos.data
 
+/**
+ * 100% Bengali-Only Localization for Offline POS & Invoice Manager.
+ */
 object Localization {
-
     enum class Lang(val code: String, val displayName: String) {
         BANGLA("bn", "বাংলা"),
         ENGLISH("en", "English")
     }
 
-    fun get(key: Key, lang: String): String {
-        val isBn = lang.equals("bn", ignoreCase = true)
-        return if (isBn) bnMap[key] ?: enMap[key] ?: key.name else enMap[key] ?: key.name
-    }
-
-    fun string(key: Key, lang: String): String = get(key, lang)
-
     enum class Key {
-        // App
         APP_TITLE,
         TAGLINE_OFFLINE,
-
-        // Auth
         LOGIN_TITLE,
         LOGIN_SUBTITLE,
         USERNAME_OR_PHONE,
@@ -38,14 +30,10 @@ object Localization {
         BTN_RESET_PASSWORD,
         SECURITY_NOTICE,
         LOGOUT,
-
-        // Main Navigation
         NAV_INVOICE,
         NAV_HISTORY,
         NAV_PRODUCTS,
         NAV_SETTINGS,
-
-        // Invoice Screen
         CUSTOMER_INFO_LABEL,
         CUSTOMER_INFO_PLACEHOLDER,
         ADD_PRODUCT_OR_SERVICE,
@@ -68,16 +56,12 @@ object Localization {
         CUSTOM_ITEM_UNIT,
         BTN_ADD,
         CANCEL,
-
-        // Product Catalog Modal
         MODAL_SELECT_PRODUCT,
         SEARCH_PRODUCTS,
         FILTER_ALL,
         FILTER_LIQUID,
         FILTER_PRODUCT,
         FILTER_SERVICE,
-
-        // Sales History & Reports
         HISTORY_TITLE,
         SEARCH_ORDERS_PLACEHOLDER,
         DATE_FILTER_ALL,
@@ -132,8 +116,6 @@ object Localization {
         DATE_TIME,
         OPERATOR,
         NO_RECORDS_FOUND,
-
-        // Product Management
         PRODUCTS_TITLE,
         BTN_NEW_PRODUCT,
         EDIT_PRODUCT,
@@ -148,8 +130,6 @@ object Localization {
         BTN_SAVE,
         BTN_DELETE,
         CONFIRM_DELETE,
-
-        // Settings Tabs
         SETTINGS_TITLE,
         TAB_COMPANY_HEADER,
         TAB_USER_PROFILE,
@@ -157,8 +137,6 @@ object Localization {
         TAB_LANGUAGE,
         TAB_THEME,
         TAB_PRINTER,
-
-        // Settings Content
         COMPANY_NAME,
         BRANCH_NAME,
         BRANCH_NUMBER,
@@ -195,15 +173,11 @@ object Localization {
         GRANT_PERMISSION,
         NO_DISCOVERED_DEVICES,
         PREVIEW_RECEIPT,
-
-        // Receipts
         RECEIPT_TITLE,
         BTN_PRINT_BLUETOOTH,
         BTN_COPY_TEXT,
         BTN_SHARE_RECEIPT,
         SUCCESS_SAVED,
-
-        // Company Logo
         COMPANY_LOGO,
         ADD_LOGO,
         CHANGE_LOGO,
@@ -214,15 +188,11 @@ object Localization {
         LOGO_ERROR_READ,
         NO_LOGO_CONFIGURED,
         USE_OFFICIAL_LOGO,
-
-        // Transaction Delete
         BTN_DELETE_TRANSACTION,
         CONFIRM_DELETE_TRANSACTION_TITLE,
         CONFIRM_DELETE_TRANSACTION_MSG,
         DELETE_SUCCESS,
         DELETE_FAILED,
-
-        // Database Capacity & Monitoring
         TAB_DATABASE_STATUS,
         DB_STATUS_TITLE,
         DB_TOTAL_TRANSACTIONS,
@@ -236,8 +206,6 @@ object Localization {
         DB_CAPACITY_WARNING_MSG,
         DB_CAPACITY_SAFE_MSG,
         BTN_BACKUP_EXCEL,
-
-        // Multi-Branch XLSX Sync & Merge
         XLSX_SYNC_TITLE,
         XLSX_SYNC_DESC,
         XLSX_SYNC_CARD_TITLE,
@@ -257,14 +225,10 @@ object Localization {
         IMPORT_NO_CONFLICTS_MSG,
         IMPORT_VALIDATION_ERRORS_TITLE,
         BTN_CLOSE_SUMMARY,
-
-        // PDF Invoice Export & Share
         BTN_SHARE_PDF,
         BTN_DRAFT_PDF,
         PDF_INVOICE_TITLE,
         SAVED_PDF_SUCCESS,
-
-        // Settings, Localization & DB additions
         ACTIVE_BADGE,
         LANGUAGE_BANGLA_TITLE,
         LANGUAGE_BANGLA_DESC,
@@ -297,8 +261,6 @@ object Localization {
         OPERATOR_PROFILE_SAVED_SUCCESS,
         PERCENT_USED,
         BTN_FULL_BACKUP_XLSX,
-
-        // Date Range & Quick Filters
         DATE_FILTER_SIX_MONTHS,
         CUSTOM_DATE_FROM,
         CUSTOM_DATE_TO,
@@ -307,8 +269,6 @@ object Localization {
         SELECT_CUSTOM_DATE_RANGE,
         ENTER_DATE_RANGE_HELP,
         BTN_APPLY,
-
-        // Data Export with Date Range & Warning
         DATA_EXPORT_SECTION_TITLE,
         DATA_EXPORT_SECTION_DESC,
         EXPORT_FULL_DATA_CONFIRM_TITLE,
@@ -316,8 +276,6 @@ object Localization {
         CONFIRM_EXPORT,
         BTN_EXPORT_XLSX,
         EXPORT_DATE_RANGE_ERROR,
-
-        // Voucher Actions & Safe Edit
         BTN_UPDATE_INVOICE,
         EDIT_INVOICE_TITLE,
         EDIT_INVOICE_CUSTOMER_LABEL,
@@ -327,8 +285,6 @@ object Localization {
         INVOICE_UPDATE_SUCCESS,
         SEARCH_VOUCHER_SUGGESTIONS,
         SEARCH_BY_ORDER_OR_VOUCHER,
-
-        // Export UX & Verification
         EXPORT_STATUS_EXPORTING,
         EXPORT_STATUS_EXPORTING_DESC,
         EXPORT_COMPLETED_TITLE,
@@ -342,8 +298,6 @@ object Localization {
         EXPORT_NO_RANGE_NOTICE,
         BTN_SHARE_FILE,
         BTN_DISMISS,
-
-        // Voucher Specific Labels
         VOUCHER_ITEM_NAME,
         VOUCHER_DESCRIPTION,
         VOUCHER_QTY,
@@ -358,344 +312,10 @@ object Localization {
         VOUCHER_CUSTOMER,
         VOUCHER_FULL_PAID,
         VOUCHER_FULL_PAID_BADGE,
-        VOUCHER_WALK_IN
+        VOUCHER_WALK_IN,
     }
 
-    private val enMap = mapOf(
-        Key.APP_TITLE to "POS & Invoice Manager",
-        Key.TAGLINE_OFFLINE to "100% Offline Gas & Retail POS",
-        Key.LOGIN_TITLE to "Operator Login",
-        Key.LOGIN_SUBTITLE to "Secure offline local authentication",
-        Key.USERNAME_OR_PHONE to "Phone Number",
-        Key.PASSWORD to "Password",
-        Key.REMEMBER_ME to "Remember credentials on this device",
-        Key.BTN_LOGIN to "Log In",
-        Key.TAB_REGISTER to "User Registration",
-        Key.TAB_FORGOT to "Forgot Password",
-        Key.TAB_RESET to "Reset Password",
-        Key.FULL_NAME to "Operator Full Name",
-        Key.PHONE_NUMBER to "Mobile Phone",
-        Key.ADDRESS to "Address / Location",
-        Key.CONFIRM_PASSWORD to "Confirm Password",
-        Key.BTN_REGISTER to "Register Operator",
-        Key.BTN_VERIFY to "Verify Identity",
-        Key.BTN_RESET_PASSWORD to "Update Password",
-        Key.SECURITY_NOTICE to "Only one active operator profile per device.",
-        Key.LOGOUT to "Log Out",
-
-        Key.NAV_INVOICE to "Billing",
-        Key.NAV_HISTORY to "Reports & History",
-        Key.NAV_PRODUCTS to "Products",
-        Key.NAV_SETTINGS to "Settings",
-
-        Key.CUSTOMER_INFO_LABEL to "Customer Info / Vehicle / Phone",
-        Key.CUSTOMER_INFO_PLACEHOLDER to "e.g. 01700000000 / ABC-123",
-        Key.ADD_PRODUCT_OR_SERVICE to "Add Product/Service",
-        Key.ADD_CUSTOM_ITEM to "+ Custom Item",
-        Key.TABLE_ITEM to "Item Name",
-        Key.TABLE_QTY_UNIT to "Qty/Unit",
-        Key.TABLE_RATE to "Rate (৳)",
-        Key.TABLE_TOTAL to "Total (৳)",
-        Key.TABLE_ACTION to "Action",
-        Key.SUBTOTAL to "Sub Total",
-        Key.ROUNDING_ADJUSTMENT to "Auto-Rounding",
-        Key.ROUNDED_TOTAL to "Rounded Total (BDT)",
-        Key.BTN_CHECKOUT_PRINT to "Print & Save Receipt",
-        Key.BTN_PREVIEW_RECEIPT to "Preview Receipt",
-        Key.EMPTY_INVOICE_PROMPT to "No items in this invoice. Tap \"Add Product/Service\" to begin.",
-        Key.CUSTOM_ITEM_NAME to "Item / Service Name",
-        Key.CUSTOM_ITEM_TYPE to "Item Classification",
-        Key.CUSTOM_ITEM_PRICE to "Unit Price (BDT)",
-        Key.CUSTOM_ITEM_QTY to "Quantity",
-        Key.CUSTOM_ITEM_UNIT to "Unit (L, Pcs, etc.)",
-        Key.BTN_ADD to "Add to Invoice",
-        Key.CANCEL to "Cancel",
-
-        Key.MODAL_SELECT_PRODUCT to "Select Item from Catalog",
-        Key.SEARCH_PRODUCTS to "Search products or services...",
-        Key.FILTER_ALL to "All",
-        Key.FILTER_LIQUID to "Liquid",
-        Key.FILTER_PRODUCT to "Products",
-        Key.FILTER_SERVICE to "Services",
-
-        Key.HISTORY_TITLE to "Sales History & Transaction Reports",
-        Key.SEARCH_ORDERS_PLACEHOLDER to "Search by Order ID (#INV) or Customer...",
-        Key.DATE_FILTER_ALL to "All Time",
-        Key.DATE_FILTER_TODAY to "Today",
-        Key.DATE_FILTER_YESTERDAY to "Yesterday",
-        Key.DATE_FILTER_WEEK to "Last 7 Days",
-        Key.DATE_FILTER_MONTH to "This Month",
-        Key.DATE_FILTER_YEAR to "This Year",
-        Key.DATE_FILTER_CUSTOM to "Custom Date",
-        Key.ANALYTICS_TAB_TITLE to "Graphs & Analytics",
-        Key.TRANSACTIONS_TAB_TITLE to "Orders",
-        Key.GROUP_BY_DAY to "Sales by Day",
-        Key.GROUP_BY_MONTH to "Sales by Month",
-        Key.GROUP_BY_YEAR to "Sales by Year",
-        Key.METRIC_ROUNDED_SALES to "Rounded Sales (BDT)",
-        Key.METRIC_RAW_SALES to "Raw Sales (৳)",
-        Key.METRIC_TRANSACTIONS to "Transaction Count",
-        Key.SALES_TREND_TITLE to "Sales Trend & Analytics",
-        Key.NO_ANALYTICS_DATA to "No transactions recorded for the selected period.",
-        Key.ANALYTICS_BREAKDOWN_TITLE to "Period Breakdown",
-        Key.COLUMN_PERIOD to "Period",
-        Key.COLUMN_ORDERS to "Orders",
-        Key.COLUMN_RAW_TOTAL to "Raw Total",
-        Key.COLUMN_ROUNDED_TOTAL to "Rounded Total",
-        Key.COLUMN_ROUNDING_DIFF to "Rounding Net",
-        Key.SORT_BY_LABEL to "Sort",
-        Key.SORT_DATE_DESC to "Date: Newest First",
-        Key.SORT_DATE_ASC to "Date: Oldest First",
-        Key.SORT_AMOUNT_DESC to "Amount: Highest First",
-        Key.SORT_AMOUNT_ASC to "Amount: Lowest First",
-        Key.SORT_ORDER_DESC to "Order ID: Z-A",
-        Key.SORT_ORDER_ASC to "Order ID: A-Z",
-        Key.FILTER_ORDER_ID to "Order ID filter",
-        Key.FILTER_CUSTOMER_PHONE to "Customer / Phone filter",
-        Key.FILTER_CLEAR_ALL to "Reset Filters",
-        Key.TOP_SELLING_ITEMS to "Top Products by Revenue",
-        Key.AVG_ORDER_VALUE to "Average Ticket",
-        Key.BTN_LOAD_MORE to "Load Next Page",
-        Key.BTN_PREV_PAGE to "Previous",
-        Key.BTN_NEXT_PAGE to "Next",
-        Key.PAGE_LABEL to "Page",
-        Key.ITEMS_COUNT to "Items",
-        Key.VIEW_RECEIPT_POPUP to "View / Print Receipt",
-        Key.KPI_TOTAL_ORDERS to "Total Orders",
-        Key.KPI_TOTAL_SALES to "Gross Sales",
-        Key.KPI_TOTAL_ROUNDED to "Total Collected",
-        Key.KPI_ROUNDING_DIFF to "Rounding Net",
-        Key.BTN_EXPORT_EXCEL to "Export .xlsx",
-        Key.BTN_IMPORT_EXCEL to "Import .xlsx",
-        Key.INLINE_ITEMS_DETAILS to "Purchased Line Items",
-        Key.ORDER_ID to "Order ID",
-        Key.DATE_TIME to "Date & Time",
-        Key.OPERATOR to "Operator",
-        Key.NO_RECORDS_FOUND to "No transaction records found matching your filters.",
-
-        Key.PRODUCTS_TITLE to "Product & Service Master Catalog",
-        Key.BTN_NEW_PRODUCT to "+ New Item",
-        Key.EDIT_PRODUCT to "Edit Product / Service",
-        Key.PRODUCT_NAME to "Primary Item Name",
-        Key.PRODUCT_NAME_BN to "Bangla Name (বাংলা নাম)",
-        Key.PRODUCT_NAME_EN to "English Name",
-        Key.PRODUCT_TYPE to "Item Classification",
-        Key.UNIT_LABEL to "Unit of Measurement",
-        Key.DEFAULT_PRICE to "Default Unit Rate (BDT)",
-        Key.SORT_ORDER_LABEL to "Serial Display Order",
-        Key.DRAG_REORDER_HELP to "Drag or use arrow buttons to reorder catalog items",
-        Key.BTN_SAVE to "Save Item",
-        Key.BTN_DELETE to "Delete",
-        Key.CONFIRM_DELETE to "Are you sure you want to remove this item?",
-
-        Key.SETTINGS_TITLE to "System & Hardware Settings",
-        Key.TAB_COMPANY_HEADER to "1. Company Header",
-        Key.TAB_USER_PROFILE to "2. User Profile",
-        Key.TAB_FOOTER_NOTE to "3. Footer Note",
-        Key.TAB_LANGUAGE to "4. Language",
-        Key.TAB_THEME to "5. Theme",
-        Key.TAB_PRINTER to "6. Printer",
-
-        Key.COMPANY_NAME to "Company / Station Name",
-        Key.BRANCH_NAME to "Branch Name",
-        Key.BRANCH_NUMBER to "Branch Serial Number",
-        Key.COMPANY_PHONE to "Contact Phone",
-        Key.COMPANY_ADDRESS to "Station Address",
-        Key.FOOTER_NOTE_L1 to "Footer Note Line 1",
-        Key.FOOTER_NOTE_L2 to "Footer Note Line 2",
-        Key.THEME_LIGHT to "Light Mode",
-        Key.THEME_DARK to "Dark Mode",
-        Key.THEME_SYSTEM to "Follow System",
-        Key.PAPER_SIZE_LABEL to "Thermal Paper Roll Size",
-        Key.AUTO_CUTTER_LABEL to "ESC/POS Auto-Cutter Signal",
-        Key.BLUETOOTH_DEVICES to "Bluetooth Thermal Printers",
-        Key.BTN_SCAN_BLUETOOTH to "Refresh Paired Printers",
-        Key.TEST_PRINT to "Print Test Slip",
-        Key.PRINTER_NOT_CONNECTED to "No Bluetooth printer configured. You can still preview, share or copy receipt.",
-        Key.PRINTER_CONNECTED to "Connected Thermal Printer",
-        Key.PRINTER_DISCONNECTED to "Disconnected",
-        Key.PRINTER_CONNECTING to "Connecting...",
-        Key.PRINTER_CONNECTED_STATUS to "Connected",
-        Key.PRINTER_PRINTING to "Printing...",
-        Key.PRINTER_ERROR to "Printer Error",
-        Key.BTN_CONNECT to "Connect",
-        Key.BTN_DISCONNECT to "Disconnect",
-        Key.SCAN_PRINTERS to "Search Available Printers",
-        Key.STOP_SCAN to "Stop Search",
-        Key.PAIRED_PRINTERS_HEADER to "Paired Devices",
-        Key.AVAILABLE_PRINTERS_HEADER to "Available / Discovered Devices",
-        Key.BLUETOOTH_OFF_TITLE to "Bluetooth is Turned OFF",
-        Key.BLUETOOTH_OFF_DESC to "Please turn on Bluetooth to discover and connect to thermal printers.",
-        Key.ENABLE_BLUETOOTH to "Turn ON Bluetooth",
-        Key.PERMISSION_REQUIRED_TITLE to "Bluetooth Permissions Required",
-        Key.PERMISSION_REQUIRED_DESC to "Android requires Bluetooth permissions to scan and communicate with thermal printers.",
-        Key.GRANT_PERMISSION to "Grant Permissions",
-        Key.NO_DISCOVERED_DEVICES to "No nearby Bluetooth devices discovered yet. Tap Search to scan.",
-        Key.PREVIEW_RECEIPT to "Preview Receipt",
-
-        Key.RECEIPT_TITLE to "Thermal Print Receipt Preview",
-        Key.BTN_PRINT_BLUETOOTH to "Print to ESC/POS",
-        Key.BTN_COPY_TEXT to "Copy Receipt Text",
-        Key.BTN_SHARE_RECEIPT to "Share Receipt",
-        Key.SUCCESS_SAVED to "Invoice saved successfully!",
-
-        // Company Logo
-        Key.COMPANY_LOGO to "Company Logo",
-        Key.ADD_LOGO to "Add Logo",
-        Key.CHANGE_LOGO to "Change Logo",
-        Key.REMOVE_LOGO to "Remove Logo",
-        Key.LOGO_PREVIEW to "Logo Preview",
-        Key.LOGO_ADDED_SUCCESS to "Company logo configured successfully",
-        Key.LOGO_REMOVED_SUCCESS to "Company logo removed successfully",
-        Key.LOGO_ERROR_READ to "Failed to read image file",
-        Key.NO_LOGO_CONFIGURED to "No company logo configured yet",
-        Key.USE_OFFICIAL_LOGO to "Use Official Logo (512x512)",
-
-        // Transaction Delete
-        Key.BTN_DELETE_TRANSACTION to "Delete Voucher",
-        Key.CONFIRM_DELETE_TRANSACTION_TITLE to "Delete Voucher?",
-        Key.CONFIRM_DELETE_TRANSACTION_MSG to "Are you sure you want to delete this voucher? This action cannot be undone.",
-        Key.DELETE_SUCCESS to "Voucher deleted successfully.",
-        Key.DELETE_FAILED to "Failed to delete voucher.",
-
-        // Database Capacity & Monitoring
-        Key.TAB_DATABASE_STATUS to "Database Status",
-        Key.DB_STATUS_TITLE to "Database Capacity & Storage",
-        Key.DB_TOTAL_TRANSACTIONS to "Total Transactions",
-        Key.DB_TOTAL_ITEMS_SOLD to "Invoice Line Items",
-        Key.DB_TOTAL_PRODUCTS to "Catalog Products",
-        Key.DB_TOTAL_CUSTOMERS to "Saved Customers",
-        Key.DB_FILE_SIZE to "Local Database File Size",
-        Key.DB_SUPPORTED_CAPACITY to "Target / Supported Capacity",
-        Key.DB_REMAINING_CAPACITY to "Remaining Capacity",
-        Key.DB_CAPACITY_WARNING_TITLE to "Database Capacity Almost Full!",
-        Key.DB_CAPACITY_WARNING_MSG to "Database capacity is almost full. Please export your data and keep a backup before continuing.",
-        Key.DB_CAPACITY_SAFE_MSG to "Database storage is healthy and operating well within optimal offline capacity.",
-        Key.BTN_BACKUP_EXCEL to "Export & Backup to Excel",
-
-        // Multi-Branch XLSX Sync & Merge
-        Key.XLSX_SYNC_TITLE to "Multi-Branch XLSX Data Sync",
-        Key.XLSX_SYNC_DESC to "Exchange sales transactions offline between branches using standard Excel (.xlsx) files with stable global identifiers and conflict detection.",
-        Key.XLSX_SYNC_CARD_TITLE to "Multi-Branch XLSX Data Sync",
-        Key.XLSX_SYNC_CARD_DESC to "Exchange sales transactions offline between branches using standard Excel (.xlsx) files with stable global identifiers and conflict detection.",
-        Key.BTN_EXPORT_XLSX_LOCATION to "Export XLSX to Device...",
-        Key.BTN_SHARE_XLSX to "Share / Send XLSX File",
-        Key.BTN_IMPORT_BRANCH_XLSX to "Import & Merge Branch XLSX...",
-        Key.IMPORT_SUMMARY_TITLE to "XLSX Branch Sync Summary",
-        Key.IMPORT_METRIC_TOTAL to "Total Records",
-        Key.IMPORT_METRIC_IMPORTED to "Newly Imported",
-        Key.IMPORT_METRIC_SKIPPED to "Duplicate / Skipped",
-        Key.IMPORT_METRIC_CONFLICTS to "Data Conflicts",
-        Key.IMPORT_METRIC_INVALID to "Invalid / Rejected",
-        Key.IMPORT_METRIC_FAILED to "Failed / Corrupted",
-        Key.IMPORT_CONFLICTS_SECTION_TITLE to "Data Conflicts Detected (Local Preserved)",
-        Key.IMPORT_CONFLICT_NOTICE to "The following imported transactions match an existing Order ID or Global ID but contain conflicting data. Local records have been kept unchanged for safety.",
-        Key.IMPORT_NO_CONFLICTS_MSG to "No conflicts detected. All transactions merged safely.",
-        Key.IMPORT_VALIDATION_ERRORS_TITLE to "Row Validation Issues",
-        Key.BTN_CLOSE_SUMMARY to "Close Summary",
-
-        Key.BTN_SHARE_PDF to "Share PDF",
-        Key.BTN_DRAFT_PDF to "PDF Invoice",
-        Key.PDF_INVOICE_TITLE to "PDF Invoice",
-        Key.SAVED_PDF_SUCCESS to "Invoice PDF saved successfully!",
-
-        Key.ACTIVE_BADGE to "Active",
-        Key.LANGUAGE_BANGLA_TITLE to "বাংলা (Bangla)",
-        Key.LANGUAGE_BANGLA_DESC to "Complete interface displayed in Bangla",
-        Key.LANGUAGE_ENGLISH_TITLE to "English",
-        Key.LANGUAGE_ENGLISH_DESC to "Instant English POS Interface",
-        Key.PAPER_58MM_TITLE to "58mm",
-        Key.PAPER_58MM_DESC to "Standard Receipt (32 Columns)",
-        Key.PAPER_58MM_SUB to "Compact / Mobile Printers (384 dots)",
-        Key.PAPER_80MM_TITLE to "80mm",
-        Key.PAPER_80MM_DESC to "Wide Receipt (48 Columns)",
-        Key.PAPER_80MM_SUB to "Desktop POS Printers (576 dots)",
-        Key.AUTO_CUTTER_DESC to "Sends ESC/POS auto-cut command (GS V 66 0) with feed lines",
-        Key.SCANNING_DEVICES to "Scanning nearby Bluetooth devices...",
-        Key.BTN_RETRY to "Retry",
-        Key.BTN_CLOSE to "Close",
-        Key.MAX_SUPPORTED_CAPACITY to "Maximum Supported Records: 200,000",
-        Key.DB_STORAGE_STATUS to "Database Storage Status",
-        Key.DB_STATUS_NORMAL to "Optimal & Healthy (Offline SQLite)",
-        Key.DB_STATUS_WARNING to "Warning: Near Full Capacity (<= 1,000 remaining)",
-        Key.FEATURE_DUPLICATE_DETECTION to "Duplicate Transaction Detection",
-        Key.FEATURE_CONFLICT_PROTECTION to "Conflict Protection & Safety",
-        Key.FEATURE_PRESERVE_LOCAL to "Preserve existing local data during conflicts",
-        Key.DATA_BACKUP_SECTION_TITLE to "Data Backup & Full XLSX Export",
-        Key.DATA_BACKUP_SECTION_DESC to "Dedicated export action for backing up full local business records to XLSX.",
-        Key.FOOTER_NOTE_PREVIEW_TITLE to "Receipt Footer Note Preview",
-        Key.FOOTER_NOTE_HELP to "Enter multi-line footer note. Each line will be centered on thermal receipts.",
-        Key.FOOTER_NOTE_EXAMPLE_HINT to "Example: নিখুঁত মানের নিশ্চয়তা / ধন্যবাদ আবার আসবেন",
-        Key.BTN_LOAD_EXAMPLE_FOOTER to "Load Example Footer Note",
-        Key.FOOTER_NOTES_SAVED_SUCCESS to "Footer notes saved successfully!",
-        Key.OPERATOR_PROFILE_SAVED_SUCCESS to "Operator profile updated successfully!",
-        Key.PERCENT_USED to "used",
-        Key.BTN_FULL_BACKUP_XLSX to "Data Backup / Full XLSX Export",
-
-        // Date Range & Quick Filters
-        Key.DATE_FILTER_SIX_MONTHS to "Last 6 Months",
-        Key.CUSTOM_DATE_FROM to "From Date (dd-MM-yyyy)",
-        Key.CUSTOM_DATE_TO to "To Date (dd-MM-yyyy)",
-        Key.INVALID_DATE_FORMAT to "Invalid date format. Please use dd-MM-yyyy (e.g. 18-11-2025)",
-        Key.DATE_RANGE_ORDER_ERROR to "From Date cannot be later than To Date",
-        Key.SELECT_CUSTOM_DATE_RANGE to "Select Custom Date Range",
-        Key.ENTER_DATE_RANGE_HELP to "Enter Date Range (dd-MM-yyyy):",
-        Key.BTN_APPLY to "Apply",
-
-        // Data Export
-        Key.DATA_EXPORT_SECTION_TITLE to "Data Export",
-        Key.DATA_EXPORT_SECTION_DESC to "Export transaction records to Excel XLSX format. Filter by custom date range or export complete data.",
-        Key.EXPORT_FULL_DATA_CONFIRM_TITLE to "Full Data Export",
-        Key.EXPORT_FULL_DATA_CONFIRM_MSG to "You have not specified a date range. This will export the full available transaction data. Do you want to proceed with full export?",
-        Key.CONFIRM_EXPORT to "Confirm Export",
-        Key.BTN_EXPORT_XLSX to "Export XLSX",
-        Key.EXPORT_DATE_RANGE_ERROR to "Please provide valid From Date and To Date, or leave both blank for full export.",
-
-        // Voucher Actions & Update
-        Key.BTN_UPDATE_INVOICE to "Update",
-        Key.EDIT_INVOICE_TITLE to "Update Voucher Details",
-        Key.EDIT_INVOICE_CUSTOMER_LABEL to "Customer Info (Phone / Name)",
-        Key.EDIT_INVOICE_NOTE_LABEL to "Footer Note / Remark",
-        Key.EDIT_INVOICE_READONLY_NOTICE to "Amounts and items cannot be edited to preserve historical financial snapshot integrity.",
-        Key.SAVE_CHANGES to "Save Changes",
-        Key.INVOICE_UPDATE_SUCCESS to "Voucher details updated successfully.",
-        Key.SEARCH_VOUCHER_SUGGESTIONS to "Matching Vouchers",
-        Key.SEARCH_BY_ORDER_OR_VOUCHER to "Search Voucher / Order ID (#INV)",
-
-        // Export UX & Verification
-        Key.EXPORT_STATUS_EXPORTING to "Exporting...",
-        Key.EXPORT_STATUS_EXPORTING_DESC to "Please wait, generating Excel (.xlsx) file...",
-        Key.EXPORT_COMPLETED_TITLE to "Export completed",
-        Key.EXPORT_FULL_COMPLETED_TITLE to "Full data export completed",
-        Key.EXPORT_FAILED_TITLE to "Data Export Failed",
-        Key.EXPORT_FILE_LABEL to "File",
-        Key.EXPORT_SIZE_LABEL to "Size",
-        Key.EXPORT_RECORDS_LABEL to "Records exported",
-        Key.EXPORT_SELECTED_RANGE_LABEL to "Selected Date Range",
-        Key.EXPORT_RECORDS_TO_EXPORT to "Records to export",
-        Key.EXPORT_NO_RANGE_NOTICE to "No date range selected: Full database export.",
-        Key.BTN_SHARE_FILE to "Share / Open File",
-        Key.BTN_DISMISS to "Dismiss",
-
-        // Voucher Specific Labels
-        Key.VOUCHER_ITEM_NAME to "Item Name",
-        Key.VOUCHER_DESCRIPTION to "Item Description",
-        Key.VOUCHER_QTY to "Qty",
-        Key.VOUCHER_UNIT to "Unit",
-        Key.VOUCHER_RATE to "Rate",
-        Key.VOUCHER_TOTAL to "Total",
-        Key.VOUCHER_SUBTOTAL to "Sub Total",
-        Key.VOUCHER_TOTAL_SUMMARY to "TOTAL",
-        Key.VOUCHER_DATE to "Date",
-        Key.VOUCHER_ORDER_ID to "Order ID",
-        Key.VOUCHER_OPERATOR to "Operator",
-        Key.VOUCHER_CUSTOMER to "Customer",
-        Key.VOUCHER_FULL_PAID to "FULL PAID ✓",
-        Key.VOUCHER_FULL_PAID_BADGE to "Full Paid",
-        Key.VOUCHER_WALK_IN to "Walk-in"
-    )
-
-    private val bnMap = mapOf(
+    private val bnMap: Map<Key, String> = mapOf(
         Key.APP_TITLE to "পিওএস এবং ইনভয়েস ম্যানেজার",
         Key.TAGLINE_OFFLINE to "১০০% অফলাইন গ্যাস ও রিটেল পিওএস",
         Key.LOGIN_TITLE to "অপারেটর লগইন",
@@ -716,12 +336,10 @@ object Localization {
         Key.BTN_RESET_PASSWORD to "পাসওয়ার্ড রিসেট করুন",
         Key.SECURITY_NOTICE to "প্রতি ডিভাইসে একটি সক্রিয় অপারেটর প্রোফাইল সংরক্ষিত থাকে।",
         Key.LOGOUT to "লগআউট",
-
         Key.NAV_INVOICE to "বিলিং ও ক্যাশ",
         Key.NAV_HISTORY to "রিপোর্ট ও হিস্ট্রি",
         Key.NAV_PRODUCTS to "পণ্য তালিকা",
         Key.NAV_SETTINGS to "সেটিংস",
-
         Key.CUSTOMER_INFO_LABEL to "কাস্টমার তথ্য / গাড়ির নম্বর / মোবাইল",
         Key.CUSTOMER_INFO_PLACEHOLDER to "যেমন: ০১৭১১-৮৭৫১৪৪ / ঢাকা মেট্রো-গ ১২-৩৪৫৬",
         Key.ADD_PRODUCT_OR_SERVICE to "পণ্য বা সেবা যোগ করুন",
@@ -744,14 +362,12 @@ object Localization {
         Key.CUSTOM_ITEM_UNIT to "একক (লিটার, পিস, ইত্যাদি)",
         Key.BTN_ADD to "ইনভয়েসে যুক্ত করুন",
         Key.CANCEL to "বাতিল",
-
         Key.MODAL_SELECT_PRODUCT to "ক্যাটালগ থেকে আইটেম নির্বাচন",
         Key.SEARCH_PRODUCTS to "পণ্য বা সেবা অনুসন্ধান...",
         Key.FILTER_ALL to "সব",
         Key.FILTER_LIQUID to "তরল / জ্বালানি",
         Key.FILTER_PRODUCT to "সাধারণ পণ্য",
         Key.FILTER_SERVICE to "সার্ভিস / সেবা",
-
         Key.HISTORY_TITLE to "বিক্রয় ইতিহাস ও লেনদেন রিপোর্ট",
         Key.SEARCH_ORDERS_PLACEHOLDER to "অর্ডার আইডি (#INV) অথবা কাস্টমার খুঁজুন...",
         Key.DATE_FILTER_ALL to "সব লেনদেন",
@@ -806,7 +422,6 @@ object Localization {
         Key.DATE_TIME to "তারিখ ও সময়",
         Key.OPERATOR to "অপারেটর",
         Key.NO_RECORDS_FOUND to "নির্বাচিত ফিল্টারে কোনো লেনদেনের তথ্য পাওয়া যায়নি।",
-
         Key.PRODUCTS_TITLE to "পণ্য ও সার্ভিস মাস্টার ক্যাটালগ",
         Key.BTN_NEW_PRODUCT to "+ নতুন পণ্য",
         Key.EDIT_PRODUCT to "পণ্য বা সেবা সম্পাদনা",
@@ -821,15 +436,13 @@ object Localization {
         Key.BTN_SAVE to "সংরক্ষণ করুন",
         Key.BTN_DELETE to "মুছে ফেলুন",
         Key.CONFIRM_DELETE to "আপনি কি এই পণ্যটি মুছে ফেলতে চান?",
-
         Key.SETTINGS_TITLE to "সিস্টেম ও হার্ডওয়্যার কনফিগারেশন",
         Key.TAB_COMPANY_HEADER to "১. কোম্পানি হেডার",
         Key.TAB_USER_PROFILE to "২. অপারেটর প্রোফাইল",
         Key.TAB_FOOTER_NOTE to "৩. ফুটার নোট",
         Key.TAB_LANGUAGE to "৪. ভাষা পরিবর্তন",
         Key.TAB_THEME to "৫. থিম সেটিংস",
-        Key.TAB_PRINTER to "৬. প্রিন্টার সেটিংস",
-
+        Key.TAB_PRINTER to "৪. প্রিন্টার সেটিং",
         Key.COMPANY_NAME to "কোম্পানি / ফিলিং স্টেশনের নাম",
         Key.BRANCH_NAME to "শাখার নাম",
         Key.BRANCH_NUMBER to "শাখা নম্বর",
@@ -866,14 +479,11 @@ object Localization {
         Key.GRANT_PERMISSION to "অনুমতি দিন",
         Key.NO_DISCOVERED_DEVICES to "আশেপাশে কোনো ডিভাইস পাওয়া যায়নি। অনুসন্ধান চাপুন।",
         Key.PREVIEW_RECEIPT to "রসিদ প্রিভিউ",
-
         Key.RECEIPT_TITLE to "থার্মাল প্রিন্ট রসিদ প্রিভিউ",
         Key.BTN_PRINT_BLUETOOTH to "ESC/POS প্রিন্ট করুন",
         Key.BTN_COPY_TEXT to "রসিদ টেক্সট কপি",
         Key.BTN_SHARE_RECEIPT to "রসিদ শেয়ার করুন",
         Key.SUCCESS_SAVED to "ইনভয়েস সফলভাবে সংরক্ষিত হয়েছে!",
-
-        // Company Logo
         Key.COMPANY_LOGO to "কোম্পানি লোগো",
         Key.ADD_LOGO to "লোগো যুক্ত করুন",
         Key.CHANGE_LOGO to "লোগো পরিবর্তন করুন",
@@ -884,16 +494,12 @@ object Localization {
         Key.LOGO_ERROR_READ to "নির্বাচিত ছবি পড়তে সমস্যা হয়েছে",
         Key.NO_LOGO_CONFIGURED to "এখনো কোনো কোম্পানি লোগো নির্ধারিত হয়নি",
         Key.USE_OFFICIAL_LOGO to "অফিসিয়াল লোগো ব্যবহার করুন (৫১২x৫১২)",
-
-        // Transaction Delete
         Key.BTN_DELETE_TRANSACTION to "ভাউচার মুছে ফেলুন",
         Key.CONFIRM_DELETE_TRANSACTION_TITLE to "ভাউচার মুছে ফেলবেন?",
         Key.CONFIRM_DELETE_TRANSACTION_MSG to "আপনি কি নিশ্চিত যে এই ভাউচারটি মুছে ফেলতে চান? এই পরিবর্তনটি আর পূর্বাবস্থায় ফিরিয়ে আনা যাবে না।",
         Key.DELETE_SUCCESS to "ভাউচার সফলভাবে মুছে ফেলা হয়েছে।",
         Key.DELETE_FAILED to "ভাউচার মুছতে সমস্যা হয়েছে।",
-
-        // Database Capacity & Monitoring
-        Key.TAB_DATABASE_STATUS to "ডাটাবেজ স্ট্যাটাস",
+        Key.TAB_DATABASE_STATUS to "৫. ডাটাবেজ ধারণক্ষমতা ও স্টোরেজ",
         Key.DB_STATUS_TITLE to "ডাটাবেজ ধারণক্ষমতা ও স্টোরেজ",
         Key.DB_TOTAL_TRANSACTIONS to "মোট লেনদেন / ভাউচার",
         Key.DB_TOTAL_ITEMS_SOLD to "মোট বিক্রয় আইটেম রেকর্ড",
@@ -906,8 +512,6 @@ object Localization {
         Key.DB_CAPACITY_WARNING_MSG to "ডাটাবেজের ধারণক্ষমতা প্রায় পূর্ণ। কাজ চালিয়ে যাওয়ার আগে অনুগ্রহ করে আপনার ডাটা এক্সপোর্ট করুন এবং ব্যাকআপ রাখুন।",
         Key.DB_CAPACITY_SAFE_MSG to "ডাটাবেজ স্টোরেজ সুরক্ষিত আছে এবং সর্বোত্তম অফলাইন দক্ষতায় পরিচালিত হচ্ছে।",
         Key.BTN_BACKUP_EXCEL to "ডাটা ব্যাকআপ ও এক্সপোর্ট (এক্সেল)",
-
-        // Multi-Branch XLSX Sync & Merge
         Key.XLSX_SYNC_TITLE to "মাল্টি-ব্রাঞ্চ এক্সেল (XLSX) ডাটা সিঙ্ক",
         Key.XLSX_SYNC_DESC to "কোনো ইন্টারনেট বা সার্ভার ছাড়া অফলাইনে শাখাগুলোর মধ্যে বিক্রয় লেনদেন আদান-প্রদান করুন। ডুপ্লিকেট শনাক্তকরণ ও কনফ্লিক্ট সুরক্ষা বজায় থাকে।",
         Key.XLSX_SYNC_CARD_TITLE to "মাল্টি-ব্রাঞ্চ এক্সেল (XLSX) ডাটা সিঙ্ক",
@@ -927,12 +531,10 @@ object Localization {
         Key.IMPORT_NO_CONFLICTS_MSG to "কোনো কনফ্লিক্ট নেই। সকল লেনদেন নিরাপদে মার্জ করা হয়েছে।",
         Key.IMPORT_VALIDATION_ERRORS_TITLE to "রেকর্ড ভ্যালিডেশন ত্রুটিসমূহ",
         Key.BTN_CLOSE_SUMMARY to "সামারি বন্ধ করুন",
-
         Key.BTN_SHARE_PDF to "পিডিএফ শেয়ার",
         Key.BTN_DRAFT_PDF to "পিডিএফ ইনভয়েস",
         Key.PDF_INVOICE_TITLE to "পিডিএফ ইনভয়েস",
         Key.SAVED_PDF_SUCCESS to "পিডিএফ সফলভাবে সংরক্ষণ করা হয়েছে!",
-
         Key.ACTIVE_BADGE to "সক্রিয়",
         Key.LANGUAGE_BANGLA_TITLE to "বাংলা (Bangla)",
         Key.LANGUAGE_BANGLA_DESC to "সম্পূর্ণ ইন্টারফেস বাংলায় প্রদর্শিত হবে",
@@ -965,8 +567,6 @@ object Localization {
         Key.OPERATOR_PROFILE_SAVED_SUCCESS to "অপারেটর প্রোফাইল সংরক্ষিত হয়েছে!",
         Key.PERCENT_USED to "ব্যবহার হয়েছে",
         Key.BTN_FULL_BACKUP_XLSX to "সম্পূর্ণ ব্যাকআপ / ফুল XLSX এক্সপোর্ট",
-
-        // Date Range & Quick Filters
         Key.DATE_FILTER_SIX_MONTHS to "গত ৬ মাস",
         Key.CUSTOM_DATE_FROM to "শুরুর তারিখ (dd-MM-yyyy)",
         Key.CUSTOM_DATE_TO to "শেষের তারিখ (dd-MM-yyyy)",
@@ -975,8 +575,6 @@ object Localization {
         Key.SELECT_CUSTOM_DATE_RANGE to "নির্দিষ্ট সময়সীমা নির্বাচন",
         Key.ENTER_DATE_RANGE_HELP to "তারিখের সীমা দিন (dd-MM-yyyy):",
         Key.BTN_APPLY to "প্রয়োগ করুন",
-
-        // Data Export
         Key.DATA_EXPORT_SECTION_TITLE to "ডাটা এক্সপোর্ট",
         Key.DATA_EXPORT_SECTION_DESC to "এক্সেল (XLSX) ফরম্যাটে বিক্রয় লেনদেন এক্সপোর্ট করুন। তারিখের সীমা নির্বাচন করুন বা সম্পূর্ণ ডাটা এক্সপোর্ট করুন।",
         Key.EXPORT_FULL_DATA_CONFIRM_TITLE to "সম্পূর্ণ ডাটা এক্সপোর্ট",
@@ -984,8 +582,6 @@ object Localization {
         Key.CONFIRM_EXPORT to "এক্সপোর্ট নিশ্চিত করুন",
         Key.BTN_EXPORT_XLSX to "এক্সপোর্ট XLSX",
         Key.EXPORT_DATE_RANGE_ERROR to "অনুগ্রহ করে সঠিক শুরুর ও শেষের তারিখ দিন, অথবা সম্পূর্ণ তথ্যের জন্য উভয় ঘর খালি রাখুন।",
-
-        // Voucher Actions & Update
         Key.BTN_UPDATE_INVOICE to "আপডেট",
         Key.EDIT_INVOICE_TITLE to "ভাউচারের বিবরণ আপডেট করুন",
         Key.EDIT_INVOICE_CUSTOMER_LABEL to "কাস্টমারের তথ্য (ফোন / নাম)",
@@ -995,8 +591,6 @@ object Localization {
         Key.INVOICE_UPDATE_SUCCESS to "ভাউচারের বিবরণ সফলভাবে আপডেট করা হয়েছে।",
         Key.SEARCH_VOUCHER_SUGGESTIONS to "পরামর্শিত ভাউচার",
         Key.SEARCH_BY_ORDER_OR_VOUCHER to "ভাউচার / অর্ডার আইডি খুঁজুন (#INV)",
-
-        // Export UX & Verification
         Key.EXPORT_STATUS_EXPORTING to "ডাটা এক্সপোর্ট হচ্ছে...",
         Key.EXPORT_STATUS_EXPORTING_DESC to "অনুগ্রহ করে অপেক্ষা করুন, এক্সেল (.xlsx) ফাইল প্রস্তুত হচ্ছে...",
         Key.EXPORT_COMPLETED_TITLE to "এক্সপোর্ট সম্পন্ন",
@@ -1010,8 +604,6 @@ object Localization {
         Key.EXPORT_NO_RANGE_NOTICE to "কোনো তারিখ নির্দিষ্ট করা হয়নি: সম্পূর্ণ ডাটাবেজ এক্সপোর্ট হবে।",
         Key.BTN_SHARE_FILE to "ফাইল শেয়ার / ওপেন করুন",
         Key.BTN_DISMISS to "ঠিক আছে",
-
-        // Voucher Specific Labels
         Key.VOUCHER_ITEM_NAME to "পণ্যের নাম",
         Key.VOUCHER_DESCRIPTION to "বিবরণ",
         Key.VOUCHER_QTY to "পরিমাণ",
@@ -1026,6 +618,60 @@ object Localization {
         Key.VOUCHER_CUSTOMER to "ক্রেতা",
         Key.VOUCHER_FULL_PAID to "সম্পূর্ণ পরিশোধিত ✓",
         Key.VOUCHER_FULL_PAID_BADGE to "সম্পূর্ণ পরিশোধিত",
-        Key.VOUCHER_WALK_IN to "সাধারণ ক্রেতা"
+        Key.VOUCHER_WALK_IN to "সাধারণ ক্রেতা",
     )
+
+    private val enMap: Map<Key, String> = mapOf(
+        Key.VOUCHER_ITEM_NAME to "Item Name",
+        Key.VOUCHER_DESCRIPTION to "Item Description",
+        Key.VOUCHER_QTY to "Qty",
+        Key.VOUCHER_UNIT to "Unit",
+        Key.VOUCHER_RATE to "Rate",
+        Key.VOUCHER_TOTAL to "Total",
+        Key.VOUCHER_SUBTOTAL to "Sub Total",
+        Key.VOUCHER_TOTAL_SUMMARY to "TOTAL",
+        Key.VOUCHER_DATE to "Date",
+        Key.VOUCHER_ORDER_ID to "Order ID",
+        Key.VOUCHER_OPERATOR to "Operator",
+        Key.VOUCHER_CUSTOMER to "Customer",
+        Key.VOUCHER_FULL_PAID to "FULL PAID ✓",
+        Key.VOUCHER_FULL_PAID_BADGE to "Full Paid",
+        Key.VOUCHER_WALK_IN to "Walk-in Customer",
+        Key.DATE_FILTER_SIX_MONTHS to "Last 6 Months",
+        Key.CUSTOM_DATE_FROM to "Start Date (dd-MM-yyyy)",
+        Key.CUSTOM_DATE_TO to "End Date (dd-MM-yyyy)",
+        Key.INVALID_DATE_FORMAT to "Invalid date format. Use dd-MM-yyyy (e.g., 18-11-2025)",
+        Key.DATE_RANGE_ORDER_ERROR to "Start date cannot be after end date",
+        Key.SELECT_CUSTOM_DATE_RANGE to "Select Custom Date Range",
+        Key.ENTER_DATE_RANGE_HELP to "Enter date range (dd-MM-yyyy):",
+        Key.BTN_APPLY to "Apply",
+        Key.DATA_EXPORT_SECTION_TITLE to "Data Export",
+        Key.DATA_EXPORT_SECTION_DESC to "Export sales transactions in Excel (XLSX) format. Select date range or export all data.",
+        Key.EXPORT_FULL_DATA_CONFIRM_TITLE to "Export All Data",
+        Key.EXPORT_FULL_DATA_CONFIRM_MSG to "No date range selected. This will export all available transactions. Do you want to proceed?",
+        Key.CONFIRM_EXPORT to "Confirm Export",
+        Key.BTN_EXPORT_XLSX to "Export XLSX",
+        Key.EXPORT_DATE_RANGE_ERROR to "Please provide valid start and end dates, or leave both empty for full export.",
+        Key.BTN_UPDATE_INVOICE to "Update",
+        Key.EDIT_INVOICE_TITLE to "Edit Invoice Details",
+        Key.EDIT_INVOICE_CUSTOMER_LABEL to "Customer Name / Mobile",
+        Key.EDIT_INVOICE_NOTE_LABEL to "Invoice Remark / Footer Note",
+        Key.EDIT_INVOICE_READONLY_NOTICE to "Only customer info and remarks can be edited. Items and financial calculations remain immutable.",
+        Key.SAVE_CHANGES to "Save Changes",
+        Key.INVOICE_UPDATE_SUCCESS to "Invoice details updated successfully!",
+        Key.SEARCH_VOUCHER_SUGGESTIONS to "Recent Voucher Suggestions",
+        Key.SEARCH_BY_ORDER_OR_VOUCHER to "Search by order or voucher..."
+    )
+
+    fun get(key: Key, lang: String = "bn"): String {
+        return if (lang.equals("en", ignoreCase = true)) {
+            enMap[key] ?: bnMap[key] ?: key.name
+        } else {
+            bnMap[key] ?: key.name
+        }
+    }
+
+    fun string(key: Key, lang: String = "bn"): String {
+        return get(key, lang)
+    }
 }

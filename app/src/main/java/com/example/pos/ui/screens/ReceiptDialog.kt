@@ -65,12 +65,15 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.pos.core.util.BengaliTransliterationEngine
 import com.example.pos.core.util.CompanyLogoManager
+import com.example.pos.core.util.DateTimeUtils
 import com.example.pos.data.Localization
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.domain.FinancialCalculationEngine
 import com.example.pos.printer.ThermalReceiptFormatter
 import com.example.pos.ui.components.CompanyLogoView
+import java.util.Locale
 
 @Composable
 fun ReceiptPreviewDialog(
@@ -122,7 +125,7 @@ fun ReceiptPreviewDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = Localization.get(Localization.Key.RECEIPT_TITLE, language),
+                        text = "ক্যাশ মেমো প্রিভিউ",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -171,7 +174,7 @@ fun ReceiptPreviewDialog(
                                 )
                             } else {
                                 Text(
-                                    text = "LOGO",
+                                    text = "লোগো",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 11.sp,
@@ -194,8 +197,9 @@ fun ReceiptPreviewDialog(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             ThermalReceiptFormatter.splitCompanyLines(displayCompanyName).forEach { line ->
+                                val localizedLine = BengaliTransliterationEngine.transliterate(line)
                                 Text(
-                                    text = line,
+                                    text = localizedLine,
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontSize = companyFontSize,
                                         fontWeight = FontWeight.Bold,
@@ -244,7 +248,7 @@ fun ReceiptPreviewDialog(
                         Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            if (language == "bn") "প্রিন্ট ভাউচার" else "Print Voucher",
+                            "প্রিন্ট ভাউচার",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                     }
@@ -261,7 +265,7 @@ fun ReceiptPreviewDialog(
                         ) {
                             Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (language == "bn") "PDF ডাউনলোড" else "PDF Download", fontSize = 13.sp)
+                            Text("PDF ডাউনলোড", fontSize = 13.sp)
                         }
                     }
 
@@ -275,7 +279,7 @@ fun ReceiptPreviewDialog(
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text(
-                            Localization.get(Localization.Key.BTN_CLOSE, language),
+                            "বন্ধ করুন",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
                         )
                     }
@@ -292,7 +296,7 @@ fun ReceiptPreviewDialog(
                         }) {
                             Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (language == "bn") "কপি করুন" else "Copy", fontSize = 12.sp)
+                            Text("কপি করুন", fontSize = 12.sp)
                         }
 
                         Spacer(modifier = Modifier.width(8.dp))
@@ -307,7 +311,7 @@ fun ReceiptPreviewDialog(
                         }) {
                             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (language == "bn") "শেয়ার করুন" else "Share", fontSize = 12.sp)
+                            Text("শেয়ার করুন", fontSize = 12.sp)
                         }
                     }
                 }
@@ -400,7 +404,7 @@ private fun parseReceiptForPreview(receiptText: String, configuredName: String?)
     return title to remaining
 }
 
-internal data class VoucherItemTableRow(
+data class VoucherItemTableRow(
     val itemName: String,
     val qty: String,
     val unit: String,
@@ -408,21 +412,21 @@ internal data class VoucherItemTableRow(
     val total: String
 )
 
-internal data class VoucherSummaryRow(
+data class VoucherSummaryRow(
     val label: String,
     val amount: String,
     val isBold: Boolean = false,
     val isDue: Boolean = false
 )
 
-internal data class ParsedVoucherTable(
+data class ParsedVoucherTable(
     val isFiveColumn: Boolean,
     val separatorWidth: Int,
     val rows: List<VoucherItemTableRow>,
     val summaryRows: List<VoucherSummaryRow> = emptyList()
 )
 
-internal data class ParsedReceiptBodySections(
+data class ParsedReceiptBodySections(
     val preTableText: String,
     val table: ParsedVoucherTable,
     val postTableText: String
@@ -493,6 +497,7 @@ internal fun ReceiptFormattedBody(
                     textColor = textColor,
                     separatorColor = separatorColor,
                     language = language,
+                    isFullPaid = isFullPaid,
                     modifier = Modifier.width(tableWidth)
                 )
 
@@ -539,7 +544,9 @@ private fun ReceiptPreTableSection(
             t.startsWith("Operator:", ignoreCase = true) ||
             t.startsWith("তারিখ:", ignoreCase = true) ||
             t.startsWith("অর্ডার আইডি:", ignoreCase = true) ||
+            t.startsWith("অর্ডার নম্বর:", ignoreCase = true) ||
             t.startsWith("ক্রেতা:", ignoreCase = true) ||
+            t.startsWith("গ্রাহক:", ignoreCase = true) ||
             t.startsWith("অপারেটর:", ignoreCase = true)
     }
     val headerEndIdx = if (metadataLineIdx != -1) {
@@ -576,8 +583,9 @@ private fun ReceiptPreTableSection(
                         color = separatorColor
                     )
                 } else {
+                    val localizedLine = localizePreTableLine(trimmed)
                     Text(
-                        text = trimmed,
+                        text = localizedLine,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 4.dp),
@@ -592,18 +600,129 @@ private fun ReceiptPreTableSection(
         }
     }
 
-    val metadataText = metadataRegionLines.joinToString("\n").trimEnd()
-    if (metadataText.isNotBlank()) {
-        Text(
-            text = metadataText,
-            modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
-            fontFamily = FontFamily.Monospace,
-            fontSize = receiptFontSize,
-            lineHeight = receiptLineHeight,
-            softWrap = false,
-            color = textColor
-        )
+    if (metadataRegionLines.isNotEmpty()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("voucher_metadata_section"),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            for (line in metadataRegionLines) {
+                val trimmed = line.trim()
+                if (trimmed.isEmpty()) continue
+                if (isMajorSeparatorLine(trimmed) || isMinorSeparatorLine(trimmed)) {
+                    Text(
+                        text = trimmed,
+                        modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = receiptFontSize,
+                        lineHeight = receiptLineHeight,
+                        softWrap = false,
+                        color = separatorColor
+                    )
+                } else {
+                    val localizedLine = localizePreTableLine(trimmed)
+                    Text(
+                        text = localizedLine,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = receiptFontSize,
+                        lineHeight = receiptLineHeight,
+                        textAlign = TextAlign.Center,
+                        color = textColor
+                    )
+                }
+            }
+        }
     }
+}
+
+fun localizePreTableLine(line: String): String {
+    val trimmed = line.trim()
+    if (trimmed.isEmpty() || isMajorSeparatorLine(trimmed) || isMinorSeparatorLine(trimmed)) {
+        return trimmed
+    }
+
+    // 0. Header / Memo Title
+    if (trimmed.contains("INVOICE", ignoreCase = true) || trimmed.contains("ক্যাশ মেমো")) {
+        val replaced = trimmed
+            .replace(Regex("INVOICE\\s*/?\\s*ক্যাশ মেমো|ক্যাশ মেমো\\s*\\(?INVOICE\\)?|INVOICE", RegexOption.IGNORE_CASE), "ক্যাশ মেমো")
+            .replace(Regex("\\((?:PAID|DUE|paid|due)\\)"), "")
+            .trim()
+        return replaced
+    }
+
+    // 1. Order ID
+    if (trimmed.startsWith("Order ID:", ignoreCase = true) || trimmed.startsWith("অর্ডার আইডি:") || trimmed.startsWith("অর্ডার নম্বর:")) {
+        val colonIdx = trimmed.indexOf(':')
+        val value = if (colonIdx != -1) trimmed.substring(colonIdx + 1).trim() else ""
+        val cleanValue = value.removePrefix("#").trim()
+        return "অর্ডার নম্বর: #${DateTimeUtils.toBengaliNumerals(cleanValue)}"
+    }
+
+    // 2. Date
+    if (trimmed.startsWith("Date:", ignoreCase = true) || trimmed.startsWith("তারিখ:")) {
+        val colonIdx = trimmed.indexOf(':')
+        val value = if (colonIdx != -1) trimmed.substring(colonIdx + 1).trim() else ""
+        val bnDate = localizeDateString(value)
+        return "তারিখ: $bnDate"
+    }
+
+    // 3. Operator
+    if (trimmed.startsWith("Operator:", ignoreCase = true) || trimmed.startsWith("অপারেটর:")) {
+        val colonIdx = trimmed.indexOf(':')
+        val value = if (colonIdx != -1) trimmed.substring(colonIdx + 1).trim() else ""
+        val transliterated = BengaliTransliterationEngine.transliterate(value)
+        return "অপারেটর: $transliterated"
+    }
+
+    // 4. Customer
+    if (trimmed.startsWith("Customer:", ignoreCase = true) || trimmed.startsWith("ক্রেতা:") || trimmed.startsWith("গ্রাহক:")) {
+        val colonIdx = trimmed.indexOf(':')
+        val value = if (colonIdx != -1) trimmed.substring(colonIdx + 1).trim() else ""
+        val transliterated = BengaliTransliterationEngine.transliterate(value)
+        val bnCustomer = DateTimeUtils.toBengaliNumerals(transliterated)
+        return "গ্রাহক: $bnCustomer"
+    }
+
+    // 5. Phone
+    if (trimmed.startsWith("Phone:", ignoreCase = true) || trimmed.startsWith("ফোন:")) {
+        val colonIdx = trimmed.indexOf(':')
+        val value = if (colonIdx != -1) trimmed.substring(colonIdx + 1).trim() else ""
+        return "ফোন: ${DateTimeUtils.toBengaliNumerals(value)}"
+    }
+
+    // 6. Branch
+    if (trimmed.startsWith("Branch", ignoreCase = true) || trimmed.startsWith("শাখা")) {
+        val bnBranch = trimmed
+            .replace(Regex("Branch\\s*#?", RegexOption.IGNORE_CASE), "শাখা #")
+        return DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(bnBranch))
+    }
+
+    // Default address or header text: apply transliteration and numeral conversion
+    return DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(trimmed))
+}
+
+fun localizeDateString(rawDate: String): String {
+    var result = rawDate
+    val months = listOf(
+        "January" to "জানুয়ারি", "February" to "ফেব্রুয়ারি", "March" to "মার্চ",
+        "April" to "এপ্রিল", "May" to "মে", "June" to "জুন",
+        "July" to "জুলাই", "August" to "আগস্ট", "September" to "সেপ্টেম্বর",
+        "October" to "অক্টোবর", "November" to "নভেম্বর", "December" to "ডিসেম্বর",
+        "Jan" to "জানুয়ারি", "Feb" to "ফেব্রুয়ারি", "Mar" to "মার্চ",
+        "Apr" to "এপ্রিল", "Jun" to "জুন", "Jul" to "জুলাই",
+        "Aug" to "আগস্ট", "Sep" to "সেপ্টেম্বর", "Oct" to "অক্টোবর",
+        "Nov" to "নভেম্বর", "Dec" to "ডিসেম্বর"
+    )
+    for ((enM, bnM) in months) {
+        result = result.replace(enM, bnM, ignoreCase = true)
+    }
+    result = result.replace("AM", "পূর্বাহ্ন", ignoreCase = true)
+        .replace("PM", "অপরাহ্ন", ignoreCase = true)
+    return DateTimeUtils.toBengaliNumerals(result)
 }
 
 @Composable
@@ -643,7 +762,7 @@ private fun ReceiptBodyWithFullPaidBadge(
 
         if (totalsText.isNotBlank()) {
             Text(
-                text = totalsText,
+                text = DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(totalsText)),
                 modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
                 fontFamily = FontFamily.Monospace,
                 fontSize = receiptFontSize,
@@ -686,7 +805,7 @@ private fun ReceiptBodyWithFullPaidBadge(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (language == "bn") "সম্পূর্ণ পরিশোধিত (PAID)" else "PAID / FULL PAID",
+                                    text = "সম্পূর্ণ পরিশোধিত",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     color = Color(0xFF2E7D32)
@@ -718,7 +837,7 @@ private fun ReceiptBodyWithFullPaidBadge(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (language == "bn") "বকেয়া বিল (DUE)" else "DUE / OUTSTANDING",
+                                    text = "বকেয়া বিল",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     color = Color(0xFFC62828)
@@ -739,8 +858,13 @@ private fun ReceiptBodyWithFullPaidBadge(
                         )
                     }
                     else -> {
+                        val transliterated = BengaliTransliterationEngine.transliterate(trimmed)
+                        val localizedFooter = transliterated
+                            .replace("Thank you", "ধন্যবাদ", ignoreCase = true)
+                            .replace("Thanks", "ধন্যবাদ", ignoreCase = true)
+                            .replace("Visit again", "আবার আসবেন", ignoreCase = true)
                         Text(
-                            text = trimmed,
+                            text = DateTimeUtils.toBengaliNumerals(localizedFooter),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 4.dp),
@@ -756,7 +880,7 @@ private fun ReceiptBodyWithFullPaidBadge(
         }
     } else {
         Text(
-            text = text,
+            text = DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(text)),
             modifier = Modifier.wrapContentWidth(Alignment.CenterHorizontally),
             fontFamily = FontFamily.Monospace,
             fontSize = receiptFontSize,
@@ -765,6 +889,89 @@ private fun ReceiptBodyWithFullPaidBadge(
             color = textColor
         )
     }
+}
+
+fun localizeUnit(unit: String): String {
+    val trimmed = unit.trim()
+    return when (trimmed.lowercase(Locale.ROOT)) {
+        "l", "ltr", "liter", "litre" -> "লিটার"
+        "kg" -> "কেজি"
+        "gm", "g" -> "গ্রাম"
+        "pcs", "pc" -> "পিস"
+        "unit" -> "একক"
+        "pack" -> "প্যাক"
+        "box" -> "বক্স"
+        "ml" -> "মিলি"
+        "" -> ""
+        else -> BengaliTransliterationEngine.transliterate(trimmed)
+    }
+}
+
+fun buildEffectivePreviewSummaryRows(
+    parsedSummaryRows: List<VoucherSummaryRow>,
+    isFullPaid: Boolean
+): List<VoucherSummaryRow> {
+    val subtotalRow = parsedSummaryRows.firstOrNull {
+        it.label.contains("উপমোট") || it.label.contains("উপ-মোট") || it.label.contains("Sub Total", ignoreCase = true)
+    }
+    val totalRow = parsedSummaryRows.firstOrNull {
+        it.label.contains("মোট") || it.label.contains("সর্বমোট") || it.label.contains("TOTAL", ignoreCase = true) || it.label.contains("NET PAYABLE", ignoreCase = true)
+    }
+    val paidRow = parsedSummaryRows.firstOrNull {
+        it.label.contains("জমা") || it.label.contains("পরিশোধ") || it.label.contains("Paid", ignoreCase = true)
+    }
+    val dueRow = parsedSummaryRows.firstOrNull {
+        it.label.contains("বাকি") || it.label.contains("বকেয়া") || it.label.contains("বকেয়া") || it.label.contains("Due", ignoreCase = true)
+    }
+
+    val result = mutableListOf<VoucherSummaryRow>()
+
+    if (subtotalRow != null) {
+        val cleanAmount = subtotalRow.amount.replace("৳", "").replace("BDT", "", ignoreCase = true).trim()
+        val bnAmount = "৳${DateTimeUtils.toBengaliNumerals(cleanAmount)}"
+        result.add(VoucherSummaryRow(label = "উপ-মোট", amount = bnAmount, isBold = false, isDue = false))
+    }
+
+    val totalAmountRaw = totalRow?.amount?.replace("৳", "")?.replace("BDT", "", ignoreCase = true)?.trim() ?: "0.00"
+    val totalBnAmount = "৳${DateTimeUtils.toBengaliNumerals(totalAmountRaw)}"
+    result.add(VoucherSummaryRow(label = "মোট", amount = totalBnAmount, isBold = true, isDue = false))
+
+    val paidAmountRaw = paidRow?.amount?.replace("৳", "")?.replace("BDT", "", ignoreCase = true)?.trim()
+    val dueAmountRaw = dueRow?.amount?.replace("৳", "")?.replace("BDT", "", ignoreCase = true)?.trim()
+
+    val effectivePaidStr: String
+    val effectiveDueStr: String
+
+    if (paidAmountRaw != null && dueAmountRaw != null) {
+        effectivePaidStr = paidAmountRaw
+        effectiveDueStr = dueAmountRaw
+    } else if (paidAmountRaw != null) {
+        effectivePaidStr = paidAmountRaw
+        val totalDouble = totalAmountRaw.toDoubleOrNull() ?: 0.0
+        val paidDouble = paidAmountRaw.toDoubleOrNull() ?: 0.0
+        val calculatedDue = (totalDouble - paidDouble).coerceAtLeast(0.0)
+        effectiveDueStr = String.format(Locale.US, "%.2f", calculatedDue)
+    } else if (dueAmountRaw != null) {
+        effectiveDueStr = dueAmountRaw
+        val totalDouble = totalAmountRaw.toDoubleOrNull() ?: 0.0
+        val dueDouble = dueAmountRaw.toDoubleOrNull() ?: 0.0
+        val calculatedPaid = (totalDouble - dueDouble).coerceAtLeast(0.0)
+        effectivePaidStr = String.format(Locale.US, "%.2f", calculatedPaid)
+    } else if (isFullPaid) {
+        effectivePaidStr = totalAmountRaw
+        effectiveDueStr = "0.00"
+    } else {
+        effectivePaidStr = "0.00"
+        effectiveDueStr = totalAmountRaw
+    }
+
+    val paidBnAmount = "৳${DateTimeUtils.toBengaliNumerals(effectivePaidStr)}"
+    val dueBnAmount = "৳${DateTimeUtils.toBengaliNumerals(effectiveDueStr)}"
+
+    result.add(VoucherSummaryRow(label = "জমা", amount = paidBnAmount, isBold = false, isDue = false))
+    result.add(VoucherSummaryRow(label = "বকেয়া", amount = dueBnAmount, isBold = true, isDue = true))
+
+    return result
 }
 
 @Composable
@@ -776,6 +983,7 @@ private fun VoucherItemTable(
     textColor: Color,
     separatorColor: Color,
     language: String = "en",
+    isFullPaid: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val cellFontSize = if (is80mm) receiptFontSize else 10.5.sp
@@ -797,7 +1005,7 @@ private fun VoucherItemTable(
         ) {
             if (table.isFiveColumn) {
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_DESCRIPTION, language),
+                    text = "বিবরণ",
                     modifier = Modifier.weight(1.85f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -809,7 +1017,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_QTY, language),
+                    text = "পরিমাণ",
                     modifier = Modifier.weight(0.60f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -821,7 +1029,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_UNIT, language),
+                    text = "একক",
                     modifier = Modifier.weight(0.60f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -833,7 +1041,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_RATE, language),
+                    text = "দর",
                     modifier = Modifier.weight(0.85f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -845,7 +1053,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_TOTAL, language),
+                    text = "মোট",
                     modifier = Modifier.weight(0.95f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -858,7 +1066,7 @@ private fun VoucherItemTable(
                 )
             } else {
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_ITEM_NAME, language),
+                    text = "পণ্য",
                     modifier = Modifier.weight(1.35f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -870,7 +1078,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_QTY, language),
+                    text = "পরিমাণ",
                     modifier = Modifier.weight(0.75f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -882,7 +1090,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_RATE, language),
+                    text = "দর",
                     modifier = Modifier.weight(0.90f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -894,7 +1102,7 @@ private fun VoucherItemTable(
                     color = textColor
                 )
                 Text(
-                    text = Localization.get(Localization.Key.VOUCHER_TOTAL, language),
+                    text = "মোট",
                     modifier = Modifier.weight(1.00f),
                     fontFamily = FontFamily.Monospace,
                     fontSize = cellFontSize,
@@ -920,6 +1128,12 @@ private fun VoucherItemTable(
 
         // Item Rows
         table.rows.forEachIndexed { index, row ->
+            val localizedName = BengaliTransliterationEngine.transliterate(row.itemName)
+            val localizedQty = DateTimeUtils.toBengaliNumerals(row.qty)
+            val localizedUnit = localizeUnit(row.unit)
+            val localizedRate = DateTimeUtils.toBengaliNumerals(row.rate)
+            val localizedTotal = DateTimeUtils.toBengaliNumerals(row.total)
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -930,7 +1144,7 @@ private fun VoucherItemTable(
             ) {
                 if (table.isFiveColumn) {
                     Text(
-                        text = row.itemName,
+                        text = localizedName,
                         modifier = Modifier
                             .weight(1.85f)
                             .testTag("voucher_item_name_$index"),
@@ -941,12 +1155,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.qty,
+                        text = localizedQty,
                         modifier = Modifier
                             .weight(0.60f)
                             .testTag("voucher_item_qty_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.qty.length > 5) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localizedQty.length > 5) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.End,
                         maxLines = 1,
@@ -955,12 +1169,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.unit,
+                        text = localizedUnit,
                         modifier = Modifier
                             .weight(0.60f)
                             .testTag("voucher_item_unit_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.unit.length > 5) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localizedUnit.length > 5) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.Start,
                         maxLines = 1,
@@ -969,12 +1183,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.rate,
+                        text = localizedRate,
                         modifier = Modifier
                             .weight(0.85f)
                             .testTag("voucher_item_rate_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.rate.length > 8) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localizedRate.length > 8) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.End,
                         maxLines = 1,
@@ -983,12 +1197,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.total,
+                        text = localizedTotal,
                         modifier = Modifier
                             .weight(0.95f)
                             .testTag("voucher_item_total_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.total.length > 8) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localizedTotal.length > 8) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.End,
                         maxLines = 1,
@@ -997,8 +1211,9 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                 } else {
+                    val localized4ColQty = DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(row.qty))
                     Text(
-                        text = row.itemName,
+                        text = localizedName,
                         modifier = Modifier
                             .weight(1.35f)
                             .testTag("voucher_item_name_$index"),
@@ -1009,12 +1224,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.qty,
+                        text = localized4ColQty,
                         modifier = Modifier
                             .weight(0.75f)
                             .testTag("voucher_item_qty_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.qty.length > 6) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localized4ColQty.length > 6) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.End,
                         maxLines = 1,
@@ -1023,12 +1238,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.rate,
+                        text = localizedRate,
                         modifier = Modifier
                             .weight(0.90f)
                             .testTag("voucher_item_rate_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.rate.length > 7) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localizedRate.length > 7) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.End,
                         maxLines = 1,
@@ -1037,12 +1252,12 @@ private fun VoucherItemTable(
                         color = textColor
                     )
                     Text(
-                        text = row.total,
+                        text = localizedTotal,
                         modifier = Modifier
                             .weight(1.00f)
                             .testTag("voucher_item_total_$index"),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = if (row.total.length > 8) (cellFontSize.value - 1f).sp else cellFontSize,
+                        fontSize = if (localizedTotal.length > 8) (cellFontSize.value - 1f).sp else cellFontSize,
                         lineHeight = cellLineHeight,
                         textAlign = TextAlign.End,
                         maxLines = 1,
@@ -1064,9 +1279,13 @@ private fun VoucherItemTable(
             color = separatorColor
         )
 
-        // Summary Rows (Sub Total, TOTAL, Paid, Due) rendered in the item table columns
-        table.summaryRows.forEachIndexed { sIdx, sRow ->
-            val tag = if (sRow.isDue) "voucher_due_row" else if (sRow.isBold) "voucher_total_row" else "voucher_subtotal_row"
+        // Summary Rows (Subtotal, TOTAL, Paid, Due) guaranteed to display in Bengali
+        val effectiveSummary = remember(table.summaryRows, isFullPaid) {
+            buildEffectivePreviewSummaryRows(table.summaryRows, isFullPaid)
+        }
+
+        effectiveSummary.forEachIndexed { sIdx, sRow ->
+            val tag = if (sRow.isDue) "voucher_due_row" else if (sRow.label.contains("জমা")) "voucher_paid_row" else if (sRow.isBold) "voucher_total_row" else "voucher_subtotal_row"
             val rowColor = if (sRow.isDue) Color(0xFFC62828) else textColor
             Row(
                 modifier = Modifier
@@ -1172,15 +1391,12 @@ private fun isMinorSeparatorLine(line: String): Boolean {
 }
 
 private fun extractAmountFromSummaryLine(line: String): String {
-    val tokens = line.trim().split(Regex("\\s+"))
-    return when {
-        tokens.isEmpty() -> ""
-        tokens.last().equals("BDT", ignoreCase = true) && tokens.size > 1 -> tokens[tokens.size - 2]
-        else -> tokens.last()
-    }
+    val clean = line.replace("৳", " ").replace("BDT", " ", ignoreCase = true).trim()
+    val tokens = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
+    return tokens.lastOrNull() ?: ""
 }
 
-internal fun parseReceiptSectionsForPreview(
+fun parseReceiptSectionsForPreview(
     bodyText: String,
     explicitLines: List<InvoiceLineEntity> = emptyList(),
     language: String = "en"
@@ -1236,31 +1452,35 @@ internal fun parseReceiptSectionsForPreview(
                 trimmed.startsWith("NET PAYABLE", ignoreCase = true) ||
                 trimmed.startsWith("মোট") ||
                 trimmed.startsWith("সর্বমোট")
-        val isPaidRow = trimmed.startsWith("Paid:", ignoreCase = true) || trimmed.startsWith("জমা (Paid):")
-        val isDueRow = trimmed.startsWith("Due:", ignoreCase = true) || trimmed.startsWith("বাকি (Due):")
+        val isPaidRow = trimmed.startsWith("Paid:", ignoreCase = true) ||
+                trimmed.startsWith("জমা (Paid):") ||
+                trimmed.startsWith("জমা:") ||
+                trimmed.startsWith("পরিশোধ:") ||
+                trimmed.startsWith("পরিশোধিত:")
+        val isDueRow = trimmed.startsWith("Due:", ignoreCase = true) ||
+                trimmed.startsWith("বাকি (Due):") ||
+                trimmed.startsWith("বাকি:") ||
+                trimmed.startsWith("বকেয়া:") ||
+                trimmed.startsWith("বকেয়া:")
 
         if (isSubTotal) {
             val amount = extractAmountFromSummaryLine(trimmed)
-            val isBn = language.equals("bn", ignoreCase = true) || trimmed.startsWith("উপমোট")
-            val label = if (isBn) Localization.get(Localization.Key.VOUCHER_SUBTOTAL, "bn") else Localization.get(Localization.Key.VOUCHER_SUBTOTAL, "en")
+            val label = if (trimmed.startsWith("উপমোট")) "উপমোট" else "Sub Total"
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = false))
             postTableStartIdx = idx + 1
         } else if (isTotal) {
             val amount = extractAmountFromSummaryLine(trimmed)
-            val isBn = language.equals("bn", ignoreCase = true) || trimmed.startsWith("মোট") || trimmed.startsWith("সর্বমোট")
-            val label = if (isBn) Localization.get(Localization.Key.VOUCHER_TOTAL_SUMMARY, "bn") else Localization.get(Localization.Key.VOUCHER_TOTAL_SUMMARY, "en")
+            val label = if (trimmed.startsWith("মোট") || trimmed.startsWith("সর্বমোট")) "মোট" else "TOTAL"
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = true))
             postTableStartIdx = idx + 1
         } else if (isPaidRow) {
             val amount = extractAmountFromSummaryLine(trimmed)
-            val isBn = language.equals("bn", ignoreCase = true) || trimmed.startsWith("জমা")
-            val label = if (isBn) "জমা (Paid):" else "Paid:"
+            val label = if (trimmed.startsWith("Paid:", ignoreCase = true)) "Paid:" else "জমা (Paid):"
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = false, isDue = false))
             postTableStartIdx = idx + 1
         } else if (isDueRow) {
             val amount = extractAmountFromSummaryLine(trimmed)
-            val isBn = language.equals("bn", ignoreCase = true) || trimmed.startsWith("বাকি")
-            val label = if (isBn) "বাকি (Due):" else "Due:"
+            val label = if (trimmed.startsWith("Due:", ignoreCase = true)) "Due:" else "বাকি (Due):"
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = true, isDue = true))
             postTableStartIdx = idx + 1
         } else {
