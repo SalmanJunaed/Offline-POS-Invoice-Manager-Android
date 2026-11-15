@@ -151,23 +151,23 @@ class VoucherLocalizationAndSummaryColumnsTest {
         assertTrue("Should contain Bangla Rate header", text.contains("দর"))
         assertTrue("Should contain Bangla Total header", text.contains("মোট"))
         assertTrue("Should contain Bangla Date label", text.contains("তারিখ:"))
-        assertTrue("Should contain Bangla Order ID label", text.contains("অর্ডার আইডি:"))
+        assertTrue("Should contain Bangla Order ID label", text.contains("অর্ডার নম্বর:"))
         assertTrue("Should contain Bangla Operator label", text.contains("অপারেটর:"))
-        assertTrue("Should contain Bangla Customer label", text.contains("ক্রেতা:"))
+        assertTrue("Should contain Bangla Customer label", text.contains("গ্রাহক:"))
         assertTrue("Should contain Bangla FULL PAID", text.contains("সম্পূর্ণ পরিশোধিত ✓"))
 
-        // Check Subtotal line layout: উপমোট on left, amount on right
+        // Check Subtotal line layout: উপ-মোট on left, amount on right
         val lines = text.lines()
-        val subtotalLine = lines.firstOrNull { it.contains("উপমোট") }
-        assertNotNull("উপমোট line must be present", subtotalLine)
-        assertTrue("উপমোট must start at column 0", subtotalLine!!.startsWith("উপমোট"))
-        assertTrue("উপমোট amount must end at right", subtotalLine.trimEnd().endsWith("450.00"))
+        val subtotalLine = lines.firstOrNull { it.contains("উপ-মোট") }
+        assertNotNull("উপ-মোট line must be present", subtotalLine)
+        assertTrue("উপ-মোট must start at column 0", subtotalLine!!.startsWith("উপ-মোট"))
+        assertTrue("উপ-মোট amount must end at right", subtotalLine.trimEnd().endsWith("৪৫০.০০"))
 
-        // Check TOTAL line layout: মোট on left, amount on right
-        val totalLine = lines.firstOrNull { it.startsWith("মোট") }
-        assertNotNull("মোট line must be present", totalLine)
-        assertTrue("মোট must start at column 0", totalLine!!.startsWith("মোট"))
-        assertTrue("মোট amount must end at right", totalLine.trimEnd().endsWith("450.00"))
+        // Check TOTAL line layout: সর্বমোট প্রদেয় on left, amount on right
+        val totalLine = lines.firstOrNull { it.startsWith("সর্বমোট প্রদেয়") }
+        assertNotNull("সর্বমোট প্রদেয় line must be present", totalLine)
+        assertTrue("সর্বমোট প্রদেয় must start at column 0", totalLine!!.startsWith("সর্বমোট প্রদেয়"))
+        assertTrue("সর্বমোট প্রদেয় amount must end at right", totalLine.trimEnd().endsWith("৪৫০.০০"))
     }
 
     @Test
@@ -215,15 +215,15 @@ class VoucherLocalizationAndSummaryColumnsTest {
         assertTrue("Should contain Bangla Unit header", text.contains("একক"))
 
         val lines = text.lines()
-        val subtotalLine = lines.firstOrNull { it.contains("উপমোট") }
-        assertNotNull("উপমোট line must be present", subtotalLine)
-        assertTrue("উপমোট must start at column 0", subtotalLine!!.startsWith("উপমোট"))
-        assertTrue("উপমোট amount must end at right", subtotalLine.trimEnd().endsWith("450.00"))
+        val subtotalLine = lines.firstOrNull { it.contains("উপ-মোট") }
+        assertNotNull("উপ-মোট line must be present", subtotalLine)
+        assertTrue("উপ-মোট must start at column 0", subtotalLine!!.startsWith("উপ-মোট"))
+        assertTrue("উপ-মোট amount must end at right", subtotalLine.trimEnd().endsWith("৪৫০.০০"))
 
-        val totalLine = lines.firstOrNull { it.startsWith("মোট") }
-        assertNotNull("মোট line must be present", totalLine)
-        assertTrue("মোট must start at column 0", totalLine!!.startsWith("মোট"))
-        assertTrue("মোট amount must end at right", totalLine.trimEnd().endsWith("450.00"))
+        val totalLine = lines.firstOrNull { it.startsWith("সর্বমোট প্রদেয়") }
+        assertNotNull("সর্বমোট প্রদেয় line must be present", totalLine)
+        assertTrue("সর্বমোট প্রদেয় must start at column 0", totalLine!!.startsWith("সর্বমোট প্রদেয়"))
+        assertTrue("সর্বমোট প্রদেয় amount must end at right", totalLine.trimEnd().endsWith("৪৫০.০০"))
     }
 
     @Test
@@ -267,16 +267,24 @@ class VoucherLocalizationAndSummaryColumnsTest {
         val bnSections = parseReceiptSectionsForPreview(bnText, emptyList(), "bn")
         assertNotNull("Bangla preview sections must parse", bnSections)
         assertEquals(2, bnSections!!.table.rows.size)
-        assertEquals(2, bnSections.table.summaryRows.size)
-        assertEquals("উপমোট", bnSections.table.summaryRows[0].label)
-        assertEquals("450.00", bnSections.table.summaryRows[0].amount)
+        assertEquals(4, bnSections.table.summaryRows.size)
+        assertEquals("উপ-মোট", bnSections.table.summaryRows[0].label)
+        assertEquals("৪৫০.০০", bnSections.table.summaryRows[0].amount)
         assertFalse(bnSections.table.summaryRows[0].isBold)
-        assertEquals("মোট", bnSections.table.summaryRows[1].label)
-        assertEquals("450.00", bnSections.table.summaryRows[1].amount)
+        assertEquals("সর্বমোট প্রদেয়", bnSections.table.summaryRows[1].label)
+        assertEquals("৪৫০.০০", bnSections.table.summaryRows[1].amount)
         assertTrue(bnSections.table.summaryRows[1].isBold)
-        // postTableText should NOT duplicate Subtotal or Total
-        assertFalse(bnSections.postTableText.contains("উপমোট"))
-        assertFalse(bnSections.postTableText.contains("মোট"))
+        assertEquals("জমা", bnSections.table.summaryRows[2].label)
+        assertEquals("৪৫০", bnSections.table.summaryRows[2].amount)
+        assertFalse(bnSections.table.summaryRows[2].isDue)
+        assertEquals("বকেয়া", bnSections.table.summaryRows[3].label)
+        assertEquals("০", bnSections.table.summaryRows[3].amount)
+        assertTrue(bnSections.table.summaryRows[3].isDue)
+        // postTableText should NOT duplicate Subtotal, Total, Paid, or Due
+        assertFalse(bnSections.postTableText.contains("উপ-মোট"))
+        assertFalse(bnSections.postTableText.contains("সর্বমোট প্রদেয়"))
+        assertFalse(bnSections.postTableText.contains("জমা"))
+        assertFalse(bnSections.postTableText.contains("বকেয়া"))
     }
 
     @Test
@@ -295,5 +303,87 @@ class VoucherLocalizationAndSummaryColumnsTest {
         )
         assertNotNull(payload)
         assertTrue("ESC/POS payload must not be empty", payload.isNotEmpty())
+    }
+
+    @Test
+    fun testStep05B_BengaliUnitMappingsAnd58mmCurrency() {
+        val unitLines = listOf(
+            InvoiceLineEntity(orderId = "U1", itemId = "1", itemName = "CNG Fuel", itemType = "Liquid", unit = "Ltr", quantityStr = "10.5", unitPricePaisa = 10000L, lineTotalPaisa = 105000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "2", itemName = "Filter", itemType = "Product", unit = "Pcs", quantityStr = "1", unitPricePaisa = 5000L, lineTotalPaisa = 5000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "3", itemName = "Maintenance", itemType = "Service", unit = "Service", quantityStr = "1", unitPricePaisa = 20000L, lineTotalPaisa = 20000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "4", itemName = "CNG Gas", itemType = "Gas", unit = "CFT", quantityStr = "1", unitPricePaisa = 4000L, lineTotalPaisa = 4000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "5", itemName = "Bulk Gas", itemType = "Gas", unit = "m³", quantityStr = "1", unitPricePaisa = 6000L, lineTotalPaisa = 6000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "6", itemName = "Sugar", itemType = "Product", unit = "Kg", quantityStr = "2", unitPricePaisa = 5000L, lineTotalPaisa = 10000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "7", itemName = "Spice", itemType = "Product", unit = "Gram", quantityStr = "100", unitPricePaisa = 200L, lineTotalPaisa = 20000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "8", itemName = "Biscuit", itemType = "Product", unit = "Pack", quantityStr = "1", unitPricePaisa = 3000L, lineTotalPaisa = 3000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "9", itemName = "Soap", itemType = "Product", unit = "Box", quantityStr = "1", unitPricePaisa = 12000L, lineTotalPaisa = 12000L),
+            InvoiceLineEntity(orderId = "U1", itemId = "10", itemName = "Syrup", itemType = "Liquid", unit = "ML", quantityStr = "250", unitPricePaisa = 100L, lineTotalPaisa = 25000L)
+        )
+        val inv = sampleInvoice().copy(orderId = "U1", rawTotalPaisa = 210000L, roundedTotalBdt = 2100L, paidAmountBdt = 2100L, isPaid = true)
+
+        val text58 = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), inv, unitLines, "58mm", "ধন্যবাদ", "", isFullPaid = true, lang = "bn")
+        assertTrue(text58.contains("১০.৫ লি."))
+        assertTrue(text58.contains("১ টি"))
+        assertTrue(text58.contains("১ x ২০০.০০"))
+        assertTrue(text58.contains("১ ঘনফুট"))
+        assertTrue(text58.contains("১ ঘনমিটার"))
+        assertTrue(text58.contains("২ কেজি"))
+        assertTrue(text58.contains("১০০ গ্রাম"))
+        assertTrue(text58.contains("১ প্যাক"))
+        assertTrue(text58.contains("১ বক্স"))
+        assertTrue(text58.contains("২৫০ মিলি"))
+        assertTrue("58mm Bengali receipt should use ৳ currency suffix", text58.contains("৳"))
+        assertFalse("58mm Bengali receipt should not contain BDT", text58.contains("BDT"))
+
+        val text80 = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), inv, unitLines, "80mm", "ধন্যবাদ", "", isFullPaid = true, lang = "bn")
+        assertTrue(text80.contains("ঘনফুট"))
+        assertTrue(text80.contains("ঘনমিটার"))
+        assertTrue(text80.contains("লি."))
+        assertTrue(text80.contains("টি"))
+
+        val raster80 = ThermalReceiptFormatter.render80mmItemRowToRaster("বাল্ক অটোগ্যাস প্রিমিয়াম", "১০.৫", "ঘনমিটার", "৪০০.০০", "৪২০০.০০")
+        assertNotNull("80mm raster for ঘনমিটার must render cleanly", raster80)
+        assertTrue(raster80!!.size > 8)
+        assertEquals((ThermalReceiptFormatter.DOTS_80MM / 8).toByte(), raster80[4])
+    }
+
+    @Test
+    fun testStep05B_FinancialSummaryRoundingAndPaymentStates() {
+        // 1. Rounding Adjustment present when non-zero, omitted when zero
+        val roundedInvoice = sampleInvoice().copy(rawTotalPaisa = 45040L, roundedTotalBdt = 450L, paidAmountBdt = 450L, isPaid = true)
+        val roundedText = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), roundedInvoice, sampleLines(), "58mm", "", "", isFullPaid = true, lang = "bn")
+        assertTrue("Rounding adjustment label must appear when non-zero", roundedText.contains("রাউন্ডিং সমন্বয়"))
+
+        val exactInvoice = sampleInvoice().copy(rawTotalPaisa = 45000L, roundedTotalBdt = 450L, paidAmountBdt = 450L, isPaid = true)
+        val exactText = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), exactInvoice, sampleLines(), "58mm", "", "", isFullPaid = true, lang = "bn")
+        assertFalse("Rounding adjustment must be omitted when zero", exactText.contains("রাউন্ডিং সমন্বয়"))
+
+        // 2. Unpaid: Total 1000, Paid 0, Due 1000
+        val unpaidInv = sampleInvoice().copy(rawTotalPaisa = 100000L, roundedTotalBdt = 1000L, paidAmountBdt = 0L, isPaid = false)
+        val unpaidText = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), unpaidInv, sampleLines(), "58mm", "", "", isFullPaid = false, lang = "bn")
+        val unpaidSections = parseReceiptSectionsForPreview(unpaidText, emptyList(), "bn")!!
+        assertEquals("১০০০.০০", unpaidSections.table.summaryRows.first { it.label == "সর্বমোট প্রদেয়" }.amount)
+        // Verify unpaid row specifically
+        val unpaidPaidRow = unpaidSections.table.summaryRows.first { it.label == "জমা" }
+        val unpaidDueRow = unpaidSections.table.summaryRows.first { it.label == "বকেয়া" }
+        assertEquals("০", unpaidPaidRow.amount)
+        assertEquals("১০০০", unpaidDueRow.amount)
+        assertFalse(unpaidText.contains("সম্পূর্ণ পরিশোধিত ✓"))
+
+        // 3. Partial: Total 1000, Paid 400, Due 600
+        val partialInv = sampleInvoice().copy(rawTotalPaisa = 100000L, roundedTotalBdt = 1000L, paidAmountBdt = 400L, isPaid = false)
+        val partialText = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), partialInv, sampleLines(), "80mm", "", "", isFullPaid = false, lang = "bn")
+        val partialSections = parseReceiptSectionsForPreview(partialText, emptyList(), "bn")!!
+        assertEquals("৪০০", partialSections.table.summaryRows.first { it.label == "জমা" }.amount)
+        assertEquals("৬০০", partialSections.table.summaryRows.first { it.label == "বকেয়া" }.amount)
+        assertFalse(partialText.contains("সম্পূর্ণ পরিশোধিত ✓"))
+
+        // 4. Fully paid: Total 450, Paid 450, Due 0
+        val fullInv = sampleInvoice().copy(rawTotalPaisa = 45000L, roundedTotalBdt = 450L, paidAmountBdt = 450L, isPaid = true)
+        val fullText = ThermalReceiptFormatter.generateReceiptText(sampleCompany(), fullInv, sampleLines(), "58mm", "", "", isFullPaid = true, lang = "bn")
+        val fullSections = parseReceiptSectionsForPreview(fullText, emptyList(), "bn")!!
+        assertEquals("৪৫০", fullSections.table.summaryRows.first { it.label == "জমা" }.amount)
+        assertEquals("০", fullSections.table.summaryRows.first { it.label == "বকেয়া" }.amount)
+        assertTrue(fullText.contains("সম্পূর্ণ পরিশোধিত ✓"))
     }
 }

@@ -480,10 +480,10 @@ class ThermalPrinterLayoutTest {
             lang = "bn"
         )
 
-        assertTrue("58mm receipt must contain 'জমা (Paid):'", text58.contains("জমা (Paid):"))
-        assertTrue("58mm receipt must contain paid amount 100", text58.contains("100 ৳"))
-        assertTrue("58mm receipt must contain 'বাকি (Due):'", text58.contains("বাকি (Due):"))
-        assertTrue("58mm receipt must contain remaining due 86", text58.contains("86 ৳"))
+        assertTrue("58mm receipt must contain 'জমা'", text58.contains("জমা"))
+        assertTrue("58mm receipt must contain paid amount ১০০ ৳", text58.contains("১০০ ৳"))
+        assertTrue("58mm receipt must contain 'বকেয়া'", text58.contains("বকেয়া"))
+        assertTrue("58mm receipt must contain remaining due ৮৬ ৳", text58.contains("৮৬ ৳"))
         assertFalse("Partial paid receipt must NOT contain FULL PAID check", text58.contains("FULL PAID ✓"))
         assertFalse("Partial paid receipt must NOT contain সম্পূর্ণ পরিশোধিত check", text58.contains("সম্পূর্ণ পরিশোধিত ✓"))
 
@@ -504,10 +504,10 @@ class ThermalPrinterLayoutTest {
             lang = "bn"
         )
 
-        assertTrue("80mm receipt must contain 'জমা (Paid):'", text80.contains("জমা (Paid):"))
-        assertTrue("80mm receipt must contain '100 ৳'", text80.contains("100 ৳"))
-        assertTrue("80mm receipt must contain 'বাকি (Due):'", text80.contains("বাকি (Due):"))
-        assertTrue("80mm receipt must contain '86 ৳'", text80.contains("86 ৳"))
+        assertTrue("80mm receipt must contain 'জমা'", text80.contains("জমা"))
+        assertTrue("80mm receipt must contain '১০০ ৳'", text80.contains("১০০ ৳"))
+        assertTrue("80mm receipt must contain 'বকেয়া'", text80.contains("বকেয়া"))
+        assertTrue("80mm receipt must contain '৮৬ ৳'", text80.contains("৮৬ ৳"))
     }
 
     @Test

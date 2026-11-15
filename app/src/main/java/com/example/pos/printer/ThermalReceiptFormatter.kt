@@ -13,7 +13,10 @@ import android.text.TextPaint
 import com.example.pos.data.db.CompanyHeaderEntity
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
+import com.example.pos.core.util.BengaliTransliterationEngine
+import com.example.pos.core.util.DateTimeUtils
 import com.example.pos.domain.FinancialCalculationEngine
+import com.example.pos.ui.screens.localizeUnit
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -114,11 +117,38 @@ object ThermalReceiptFormatter {
     }
 
     fun format58mmSummaryLine(label: String, amount: String): String {
-        return padRightVisual(label, 12) + " " + padLeftVisual("", 4) + " " + padLeftVisual("", 6) + " " + padLeftVisual(amount, 7)
+        val totalWidth = WIDTH_58MM
+        val labelWidth = getVisualWidth(label)
+        val amountWidth = getVisualWidth(amount)
+        val spaces = maxOf(1, totalWidth - labelWidth - amountWidth)
+        return label + " ".repeat(spaces) + amount
     }
 
     fun format80mmSummaryLine(label: String, amount: String): String {
-        return padRightVisual(label, 18) + " " + padLeftVisual("", 5) + " " + padRightVisual("", 5) + " " + padLeftVisual("", 8) + " " + padLeftVisual(amount, 8)
+        val totalWidth = WIDTH_80MM
+        val labelWidth = getVisualWidth(label)
+        val amountWidth = getVisualWidth(amount)
+        val spaces = maxOf(1, totalWidth - labelWidth - amountWidth)
+        return label + " ".repeat(spaces) + amount
+    }
+
+    /**
+     * Resolves consistent (paidBdt, dueBdt, effectiveFullPaid) from authoritative invoice fields
+     * and caller's isFullPaid flag without contradicting paidAmountBdt or invoice.isPaid.
+     */
+    private fun resolvePaymentBreakdown(invoice: InvoiceEntity, isFullPaid: Boolean): Triple<Long, Long, Boolean> {
+        val totalBdt = maxOf(0L, invoice.roundedTotalBdt)
+        val clampedPaid = invoice.paidAmountBdt.coerceIn(0L, totalBdt)
+        val effectiveFullPaid = when {
+            totalBdt <= 0L -> true
+            clampedPaid >= totalBdt -> true
+            !isFullPaid || !invoice.isPaid -> false
+            clampedPaid == 0L -> true // Legacy/default InvoiceEntity(isPaid = true, paidAmountBdt = 0) with isFullPaid = true
+            else -> false // Partial payment (0 < paid < total) cannot be full paid
+        }
+        val effectivePaidBdt = if (effectiveFullPaid && clampedPaid == 0L) totalBdt else clampedPaid
+        val effectiveDueBdt = if (effectiveFullPaid) 0L else maxOf(0L, totalBdt - effectivePaidBdt)
+        return Triple(effectivePaidBdt, effectiveDueBdt, effectiveFullPaid)
     }
 
     /**
@@ -164,56 +194,95 @@ object ThermalReceiptFormatter {
         val qtyLabel = if (isBn) "পরিমাণ" else "Qty"
         val rateLabel = if (isBn) "দর" else "Rate"
         val totalColLabel = if (isBn) "মোট" else "Total"
-        val subTotalLabel = if (isBn) "উপমোট" else "Sub Total"
-        val totalSummaryLabel = if (isBn) "মোট" else "TOTAL"
+        val subTotalLabel = if (isBn) "উপ-মোট" else "Sub Total"
+        val totalSummaryLabel = if (isBn) "সর্বমোট প্রদেয়" else "TOTAL"
         val dateLabel = if (isBn) "তারিখ" else "Date"
-        val orderIdLabel = if (isBn) "অর্ডার আইডি" else "Order ID"
+        val orderIdLabel = if (isBn) "অর্ডার নম্বর" else "Order ID"
         val operatorLabel = if (isBn) "অপারেটর" else "Operator"
-        val customerLabel = if (isBn) "ক্রেতা" else "Customer"
+        val customerLabel = if (isBn) "গ্রাহক" else "Customer"
         val fullPaidText = if (isBn) "সম্পূর্ণ পরিশোধিত ✓" else "FULL PAID ✓"
 
         // 1. Company Name (Preserves line breaks and center-aligns every line dynamically)
-        val companyLines = splitCompanyLines(header?.companyName, "POS STATION")
+        val defaultCompanyName = if (isBn) "পিওএস স্টেশন" else "POS STATION"
+        val companyLines = splitCompanyLines(header?.companyName, defaultCompanyName)
         companyLines.forEach { line ->
-            sb.appendLine(centerText(line, width))
+            val displayLine = if (isBn) BengaliTransliterationEngine.transliterate(line) else line
+            sb.appendLine(centerText(displayLine, width))
         }
 
         // 2. Branch info & Address (Centered)
         val branchInfo = if (!header?.branchName.isNullOrBlank()) {
-            if (!header.branchNumber.isNullOrBlank()) "${header.branchName} (${header.branchNumber})" else header.branchName
+            val bName = if (isBn) BengaliTransliterationEngine.transliterate(header.branchName) else header.branchName
+            val bNum = if (isBn && !header.branchNumber.isNullOrBlank()) {
+                DateTimeUtils.toBengaliNumerals(header.branchNumber)
+            } else {
+                header.branchNumber
+            }
+            if (!bNum.isNullOrBlank()) "$bName ($bNum)" else bName
         } else if (!header?.branchNumber.isNullOrBlank()) {
-            "Branch #${header.branchNumber}"
+            val bNum = if (isBn) DateTimeUtils.toBengaliNumerals(header.branchNumber) else header.branchNumber
+            if (isBn) " শাখা #$bNum" else "Branch #${header.branchNumber}"
         } else ""
         if (branchInfo.isNotBlank()) {
-            sb.appendLine(centerText(branchInfo, width))
+            sb.appendLine(centerText(branchInfo.trim(), width))
         }
 
         val address = header?.address ?: ""
         if (address.isNotBlank()) {
-            sb.appendLine(centerText(address, width))
+            val displayAddress = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(address))
+            } else {
+                address
+            }
+            wrapLinesForWidth(displayAddress, width).forEach {
+                sb.appendLine(centerText(it, width))
+            }
         }
 
         // 4. Phone (Centered)
         val phone = header?.phoneNumber ?: ""
         if (phone.isNotBlank()) {
-            val phoneText = if (phone.startsWith("Phone") || phone.startsWith("ফোন")) phone else if (isBn) "ফোন: $phone" else "Phone: $phone"
+            val phoneVal = if (isBn) DateTimeUtils.toBengaliNumerals(phone) else phone
+            val phoneText = if (phone.startsWith("Phone") || phone.startsWith("ফোন")) {
+                phoneVal
+            } else if (isBn) {
+                "ফোন: $phoneVal"
+            } else {
+                "Phone: $phone"
+            }
             sb.appendLine(centerText(phoneText, width))
         }
 
+        // Invoice Title
+        if (isBn) {
+            sb.appendLine(centerText("ক্যাশ মেমো", width))
+        }
+
         // 5. Order ID (Independently Centered)
-        sb.appendLine(centerText("$orderIdLabel: #${invoice.orderId}", width))
+        val orderIdVal = if (isBn) DateTimeUtils.toBengaliNumerals(invoice.orderId) else invoice.orderId
+        sb.appendLine(centerText("$orderIdLabel: #$orderIdVal", width))
 
         // 6. Date/Time (Independently Centered)
-        val dateFormat = SimpleDateFormat("dd-MMM-yyyy hh:mma", Locale.US)
-        val dateStr = dateFormat.format(Date(invoice.dateTime))
+        val dateStr = if (isBn) {
+            DateTimeUtils.formatReceiptDateTime(invoice.dateTime)
+        } else {
+            val dateFormat = SimpleDateFormat("dd-MMM-yyyy hh:mma", Locale.US)
+            dateFormat.format(Date(invoice.dateTime))
+        }
         sb.appendLine(centerText("$dateLabel: $dateStr", width))
 
         // 7. Operator (Independently Centered)
-        sb.appendLine(centerText("$operatorLabel: ${invoice.operatorName}", width))
+        val operatorVal = if (isBn) BengaliTransliterationEngine.transliterate(invoice.operatorName) else invoice.operatorName
+        sb.appendLine(centerText("$operatorLabel: $operatorVal", width))
 
         // 8. Customer (Independently Centered, omitted if blank or placeholder)
         if (!isCustomerInfoOmitted(invoice.customerInfo)) {
-            sb.appendLine(centerText("$customerLabel: ${invoice.customerInfo}", width))
+            val customerVal = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(invoice.customerInfo))
+            } else {
+                invoice.customerInfo
+            }
+            sb.appendLine(centerText("$customerLabel: $customerVal", width))
         }
 
         // STRAIGHT SEPARATOR 1 (Between metadata and item table header)
@@ -231,62 +300,104 @@ object ThermalReceiptFormatter {
 
         // 12. Items
         for (item in lines) {
-            val name = item.itemName
-            val qtyUnit = "${item.quantityStr}${item.unit.take(2)}".trim()
-            val rate = FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa)
-            val total = FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
+            val name = if (isBn) BengaliTransliterationEngine.transliterate(item.itemName) else item.itemName
+            val unitFormatted = if (isBn) localizeUnit(item.unit, item.itemType) else item.unit
+            val qtyVal = if (isBn) DateTimeUtils.toBengaliNumerals(item.quantityStr) else item.quantityStr
+            val rate = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa))
+            } else {
+                FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa)
+            }
+            val total = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa))
+            } else {
+                FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
+            }
+            val currencySuffix = if (isBn) "৳" else "BDT"
+            val qtyUnit = if (unitFormatted.isNotBlank()) "$qtyVal $unitFormatted".trim() else qtyVal
 
-            if (getVisualWidth(name) <= 12) {
+            if (!isBn && getVisualWidth(name) <= 12) {
+                val enQtyUnit = "${item.quantityStr}${item.unit.take(2)}".trim()
                 sb.appendLine(
                     padRightVisual(name, 12) + " " +
-                            padLeftVisual(qtyUnit.take(4), 4) + " " +
+                            padLeftVisual(enQtyUnit.take(4), 4) + " " +
                             padLeftVisual(rate.take(6), 6) + " " +
                             padLeftVisual(total.take(7), 7)
                 )
             } else {
-                // Item name on line 1, details indented on line 2
+                // Item name on line 1 (wrapped), details indented on line 2
                 val wrappedName = wrapText(name, width)
                 wrappedName.forEach { sb.appendLine(it) }
-                val detailLeft = "  ${qtyUnit} x ${rate}"
-                sb.appendLine(padRow(detailLeft, "$total BDT", width))
+                val detailLeft = "  $qtyUnit x $rate"
+                val detailRight = "$total $currencySuffix"
+                sb.appendLine(padRow(detailLeft, detailRight, width))
             }
         }
 
         // STRAIGHT SEPARATOR 3 (Between item rows and Subtotal)
         sb.appendLine(sepStraight)
 
-        // 14. Subtotal (In Item Name column, amount in Total column)
-        val subtotalStr = FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)
+        // 14. Subtotal
+        val rawSubtotalStr = FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)
+        val subtotalStr = if (isBn) DateTimeUtils.toBengaliNumerals(rawSubtotalStr) else rawSubtotalStr
         sb.appendLine(format58mmSummaryLine(subTotalLabel, subtotalStr))
 
-        // 15. Rounded Total (In Item Name column, amount in Total column)
-        val roundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
+        // Rounding Adjustment (only when non-zero)
+        val roundingDiffPaisa = FinancialCalculationEngine.calculateRoundingDifferencePaisa(invoice.rawTotalPaisa, invoice.roundedTotalBdt)
+        if (roundingDiffPaisa != 0L) {
+            val sign = if (roundingDiffPaisa > 0) "+" else "-"
+            val absPaisa = kotlin.math.abs(roundingDiffPaisa)
+            val absBdt = FinancialCalculationEngine.formatPaisaToBdt(absPaisa)
+            val roundingStr = if (isBn) "$sign${DateTimeUtils.toBengaliNumerals(absBdt)}" else "$sign$absBdt"
+            val roundingLabel = if (isBn) "রাউন্ডিং সমন্বয়" else "Rounding Adj:"
+            sb.appendLine(format58mmSummaryLine(roundingLabel, roundingStr))
+        }
+
+        // 15. Rounded Total / Grand Total
+        val rawRoundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
+        val roundedStr = if (isBn) DateTimeUtils.toBengaliNumerals(rawRoundedStr) else rawRoundedStr
         sb.appendLine(format58mmSummaryLine(totalSummaryLabel, roundedStr))
 
         // Payment Status / Breakdown
-        val paidLabel = if (isBn) "জমা (Paid):" else "Paid:"
-        val dueLabel = if (isBn) "বাকি (Due):" else "Due:"
-        val paidAmountBdt = invoice.paidAmountBdt
-        val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
+        val paidLabel = if (isBn) "জমা" else "Paid:"
+        val dueLabel = if (isBn) "বকেয়া" else "Due:"
+        val (paidAmountBdt, dueAmountBdt, effectiveFullPaid) = resolvePaymentBreakdown(invoice, isFullPaid)
 
-        if (isFullPaid || dueAmountBdt <= 0L) {
-            sb.appendLine(centerText(fullPaidText, width))
+        if (isBn) {
+            val paidStr = "${DateTimeUtils.toBengaliNumerals(paidAmountBdt.toString())} ৳"
+            val dueStr = "${DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())} ৳"
+            sb.appendLine(format58mmSummaryLine(paidLabel, paidStr))
+            sb.appendLine(format58mmSummaryLine(dueLabel, dueStr))
+
+            if (effectiveFullPaid) {
+                sb.appendLine(centerText(fullPaidText, width))
+            } else {
+                val dueStamp = "*** বকেয়া / DUE ✕ ***"
+                sb.appendLine(centerText(dueStamp, width))
+            }
         } else {
-            sb.appendLine(format58mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
-            sb.appendLine(format58mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
-            val dueStamp = if (isBn) "*** বকেয়া / DUE ✕ ***" else "*** DUE / UNPAID ✕ ***"
-            sb.appendLine(centerText(dueStamp, width))
+            if (effectiveFullPaid) {
+                sb.appendLine(centerText(fullPaidText, width))
+            } else {
+                sb.appendLine(format58mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
+                sb.appendLine(format58mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
+                sb.appendLine(centerText("*** DUE / UNPAID ✕ ***", width))
+            }
         }
 
         // 17. Footer notes (Centered)
         if (footerLine1.isNotBlank()) {
             footerLine1.lines().forEach { l ->
-                if (l.isNotBlank()) sb.appendLine(centerText(l.trim(), width))
+                if (l.isNotBlank()) {
+                    sb.appendLine(centerText(l.trim(), width))
+                }
             }
         }
         if (footerLine2.isNotBlank()) {
             footerLine2.lines().forEach { l ->
-                if (l.isNotBlank()) sb.appendLine(centerText(l.trim(), width))
+                if (l.isNotBlank()) {
+                    sb.appendLine(centerText(l.trim(), width))
+                }
             }
         }
 
@@ -316,56 +427,95 @@ object ThermalReceiptFormatter {
         val unitLabel = if (isBn) "একক" else "Unit"
         val rateLabel = if (isBn) "দর" else "Rate"
         val totalColLabel = if (isBn) "মোট" else "Total"
-        val subTotalLabel = if (isBn) "উপমোট" else "Sub Total"
-        val totalSummaryLabel = if (isBn) "মোট" else "TOTAL"
+        val subTotalLabel = if (isBn) "উপ-মোট" else "Sub Total"
+        val totalSummaryLabel = if (isBn) "সর্বমোট প্রদেয়" else "TOTAL"
         val dateLabel = if (isBn) "তারিখ" else "Date"
-        val orderIdLabel = if (isBn) "অর্ডার আইডি" else "Order ID"
+        val orderIdLabel = if (isBn) "অর্ডার নম্বর" else "Order ID"
         val operatorLabel = if (isBn) "অপারেটর" else "Operator"
-        val customerLabel = if (isBn) "ক্রেতা" else "Customer"
+        val customerLabel = if (isBn) "গ্রাহক" else "Customer"
         val fullPaidText = if (isBn) "সম্পূর্ণ পরিশোধিত ✓" else "FULL PAID ✓"
 
         // 1. Company Name (Preserves line breaks and center-aligns every line dynamically)
-        val companyLines = splitCompanyLines(header?.companyName, "POS & INVOICE STATION")
+        val defaultCompanyName = if (isBn) "পিওএস স্টেশন" else "POS & INVOICE STATION"
+        val companyLines = splitCompanyLines(header?.companyName, defaultCompanyName)
         companyLines.forEach { line ->
-            sb.appendLine(centerText(line, width))
+            val displayLine = if (isBn) BengaliTransliterationEngine.transliterate(line) else line
+            sb.appendLine(centerText(displayLine, width))
         }
 
         // 2. Branch & Address (Centered)
         val branchInfo = if (!header?.branchName.isNullOrBlank()) {
-            if (!header.branchNumber.isNullOrBlank()) "${header.branchName} (${header.branchNumber})" else header.branchName
+            val bName = if (isBn) BengaliTransliterationEngine.transliterate(header.branchName) else header.branchName
+            val bNum = if (isBn && !header.branchNumber.isNullOrBlank()) {
+                DateTimeUtils.toBengaliNumerals(header.branchNumber)
+            } else {
+                header.branchNumber
+            }
+            if (!bNum.isNullOrBlank()) "$bName ($bNum)" else bName
         } else if (!header?.branchNumber.isNullOrBlank()) {
-            "Branch #${header.branchNumber}"
+            val bNum = if (isBn) DateTimeUtils.toBengaliNumerals(header.branchNumber) else header.branchNumber
+            if (isBn) "শাখা #$bNum" else "Branch #${header.branchNumber}"
         } else ""
         if (branchInfo.isNotBlank()) {
-            sb.appendLine(centerText(branchInfo, width))
+            sb.appendLine(centerText(branchInfo.trim(), width))
         }
 
         val address = header?.address ?: ""
         if (address.isNotBlank()) {
-            sb.appendLine(centerText(address, width))
+            val displayAddress = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(address))
+            } else {
+                address
+            }
+            wrapLinesForWidth(displayAddress, width).forEach {
+                sb.appendLine(centerText(it, width))
+            }
         }
 
         // 4. Phone (Centered)
         val phone = header?.phoneNumber ?: ""
         if (phone.isNotBlank()) {
-            val phoneText = if (phone.startsWith("Phone") || phone.startsWith("ফোন")) phone else if (isBn) "ফোন: $phone" else "Phone: $phone"
+            val phoneVal = if (isBn) DateTimeUtils.toBengaliNumerals(phone) else phone
+            val phoneText = if (phone.startsWith("Phone") || phone.startsWith("ফোন")) {
+                phoneVal
+            } else if (isBn) {
+                "ফোন: $phoneVal"
+            } else {
+                "Phone: $phone"
+            }
             sb.appendLine(centerText(phoneText, width))
         }
 
+        // Invoice Title
+        if (isBn) {
+            sb.appendLine(centerText("ক্যাশ মেমো", width))
+        }
+
         // 5. Order ID (Independently Centered)
-        sb.appendLine(centerText("$orderIdLabel: #${invoice.orderId}", width))
+        val orderIdVal = if (isBn) DateTimeUtils.toBengaliNumerals(invoice.orderId) else invoice.orderId
+        sb.appendLine(centerText("$orderIdLabel: #$orderIdVal", width))
 
         // 6. Date/Time (Independently Centered)
-        val dateFormat = SimpleDateFormat("dd-MMM-yyyy hh:mma", Locale.US)
-        val dateStr = dateFormat.format(Date(invoice.dateTime))
+        val dateStr = if (isBn) {
+            DateTimeUtils.formatReceiptDateTime(invoice.dateTime)
+        } else {
+            val dateFormat = SimpleDateFormat("dd-MMM-yyyy hh:mma", Locale.US)
+            dateFormat.format(Date(invoice.dateTime))
+        }
         sb.appendLine(centerText("$dateLabel: $dateStr", width))
 
         // 7. Operator (Independently Centered)
-        sb.appendLine(centerText("$operatorLabel: ${invoice.operatorName}", width))
+        val operatorVal = if (isBn) BengaliTransliterationEngine.transliterate(invoice.operatorName) else invoice.operatorName
+        sb.appendLine(centerText("$operatorLabel: $operatorVal", width))
 
         // 8. Customer (Independently Centered, omitted if blank or placeholder)
         if (!isCustomerInfoOmitted(invoice.customerInfo)) {
-            sb.appendLine(centerText("$customerLabel: ${invoice.customerInfo}", width))
+            val customerVal = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(invoice.customerInfo))
+            } else {
+                invoice.customerInfo
+            }
+            sb.appendLine(centerText("$customerLabel: $customerVal", width))
         }
 
         // STRAIGHT SEPARATOR 1 (Between metadata and item table header)
@@ -384,29 +534,37 @@ object ThermalReceiptFormatter {
 
         // 12. Items
         for (item in lines) {
-            val name = item.itemName
-            val qty = item.quantityStr
-            val unit = item.unit.take(5)
-            val rate = FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa)
-            val total = FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
+            val name = if (isBn) BengaliTransliterationEngine.transliterate(item.itemName) else item.itemName
+            val unit = if (isBn) localizeUnit(item.unit, item.itemType) else item.unit.take(5)
+            val qty = if (isBn) DateTimeUtils.toBengaliNumerals(item.quantityStr) else item.quantityStr
+            val rate = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa))
+            } else {
+                FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa)
+            }
+            val total = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa))
+            } else {
+                FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
+            }
 
             if (getVisualWidth(name) <= 18) {
                 sb.appendLine(
                     padRightVisual(name, 18) + " " +
-                            padLeftVisual(qty.take(5), 5) + " " +
+                            padLeftVisual(qty, 5) + " " +
                             padRightVisual(unit, 5) + " " +
-                            padLeftVisual(rate.take(8), 8) + " " +
-                            padLeftVisual(total.take(8), 8)
+                            padLeftVisual(rate, 8) + " " +
+                            padLeftVisual(total, 8)
                 )
             } else {
                 // Wrap long item name
                 val nameLines = wrapText(name, 18)
                 sb.appendLine(
                     padRightVisual(nameLines.firstOrNull() ?: name, 18) + " " +
-                            padLeftVisual(qty.take(5), 5) + " " +
+                            padLeftVisual(qty, 5) + " " +
                             padRightVisual(unit, 5) + " " +
-                            padLeftVisual(rate.take(8), 8) + " " +
-                            padLeftVisual(total.take(8), 8)
+                            padLeftVisual(rate, 8) + " " +
+                            padLeftVisual(total, 8)
                 )
                 for (i in 1 until nameLines.size) {
                     sb.appendLine(nameLines[i])
@@ -417,38 +575,67 @@ object ThermalReceiptFormatter {
         // STRAIGHT SEPARATOR 3 (Between item rows and Subtotal)
         sb.appendLine(sepStraight)
 
-        // 14. Subtotal (In Item Description column, amount in Total column)
-        val subtotalStr = FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)
+        // 14. Subtotal
+        val rawSubtotalStr = FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)
+        val subtotalStr = if (isBn) DateTimeUtils.toBengaliNumerals(rawSubtotalStr) else rawSubtotalStr
         sb.appendLine(format80mmSummaryLine(subTotalLabel, subtotalStr))
 
-        // 15. Rounded Total (In Item Description column, amount in Total column)
-        val roundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
+        // Rounding Adjustment (only when non-zero)
+        val roundingDiffPaisa = FinancialCalculationEngine.calculateRoundingDifferencePaisa(invoice.rawTotalPaisa, invoice.roundedTotalBdt)
+        if (roundingDiffPaisa != 0L) {
+            val sign = if (roundingDiffPaisa > 0) "+" else "-"
+            val absPaisa = kotlin.math.abs(roundingDiffPaisa)
+            val absBdt = FinancialCalculationEngine.formatPaisaToBdt(absPaisa)
+            val roundingStr = if (isBn) "$sign${DateTimeUtils.toBengaliNumerals(absBdt)}" else "$sign$absBdt"
+            val roundingLabel = if (isBn) "রাউন্ডিং সমন্বয়" else "Rounding Adj:"
+            sb.appendLine(format80mmSummaryLine(roundingLabel, roundingStr))
+        }
+
+        // 15. Rounded Total / Grand Total
+        val rawRoundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
+        val roundedStr = if (isBn) DateTimeUtils.toBengaliNumerals(rawRoundedStr) else rawRoundedStr
         sb.appendLine(format80mmSummaryLine(totalSummaryLabel, roundedStr))
 
         // Payment Status / Breakdown
-        val paidLabel = if (isBn) "জমা (Paid):" else "Paid:"
-        val dueLabel = if (isBn) "বাকি (Due):" else "Due:"
-        val paidAmountBdt = invoice.paidAmountBdt
-        val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
+        val paidLabel = if (isBn) "জমা" else "Paid:"
+        val dueLabel = if (isBn) "বকেয়া" else "Due:"
+        val (paidAmountBdt, dueAmountBdt, effectiveFullPaid) = resolvePaymentBreakdown(invoice, isFullPaid)
 
-        if (isFullPaid || dueAmountBdt <= 0L) {
-            sb.appendLine(centerText(fullPaidText, width))
+        if (isBn) {
+            val paidStr = "${DateTimeUtils.toBengaliNumerals(paidAmountBdt.toString())} ৳"
+            val dueStr = "${DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())} ৳"
+            sb.appendLine(format80mmSummaryLine(paidLabel, paidStr))
+            sb.appendLine(format80mmSummaryLine(dueLabel, dueStr))
+
+            if (effectiveFullPaid) {
+                sb.appendLine(centerText(fullPaidText, width))
+            } else {
+                val dueStamp = "*** বকেয়া / DUE ✕ ***"
+                sb.appendLine(centerText(dueStamp, width))
+            }
         } else {
-            sb.appendLine(format80mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
-            sb.appendLine(format80mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
-            val dueStamp = if (isBn) "*** বকেয়া / DUE ✕ ***" else "*** DUE / UNPAID ✕ ***"
-            sb.appendLine(centerText(dueStamp, width))
+            if (effectiveFullPaid) {
+                sb.appendLine(centerText(fullPaidText, width))
+            } else {
+                sb.appendLine(format80mmSummaryLine(paidLabel, "$paidAmountBdt ৳"))
+                sb.appendLine(format80mmSummaryLine(dueLabel, "$dueAmountBdt ৳"))
+                sb.appendLine(centerText("*** DUE / UNPAID ✕ ***", width))
+            }
         }
 
         // 17. Footer notes (Centered)
         if (footerLine1.isNotBlank()) {
             footerLine1.lines().forEach { l ->
-                if (l.isNotBlank()) sb.appendLine(centerText(l.trim(), width))
+                if (l.isNotBlank()) {
+                    sb.appendLine(centerText(l.trim(), width))
+                }
             }
         }
         if (footerLine2.isNotBlank()) {
             footerLine2.lines().forEach { l ->
-                if (l.isNotBlank()) sb.appendLine(centerText(l.trim(), width))
+                if (l.isNotBlank()) {
+                    sb.appendLine(centerText(l.trim(), width))
+                }
             }
         }
 
@@ -478,12 +665,12 @@ object ThermalReceiptFormatter {
         val unitLabel = if (isBn) "একক" else "Unit"
         val rateLabel = if (isBn) "দর" else "Rate"
         val totalColLabel = if (isBn) "মোট" else "Total"
-        val subTotalLabel = if (isBn) "উপমোট" else "Sub Total"
-        val totalSummaryLabel = if (isBn) "মোট" else "TOTAL"
+        val subTotalLabel = if (isBn) "উপ-মোট" else "Sub Total"
+        val totalSummaryLabel = if (isBn) "সর্বমোট প্রদেয়" else "TOTAL"
         val dateLabel = if (isBn) "তারিখ" else "Date"
-        val orderIdLabel = if (isBn) "অর্ডার আইডি" else "Order ID"
+        val orderIdLabel = if (isBn) "অর্ডার নম্বর" else "Order ID"
         val operatorLabel = if (isBn) "অপারেটর" else "Operator"
-        val customerLabel = if (isBn) "ক্রেতা" else "Customer"
+        val customerLabel = if (isBn) "গ্রাহক" else "Customer"
         val fullPaidText = if (isBn) "সম্পূর্ণ পরিশোধিত ✓" else "FULL PAID ✓"
 
         val is80mm = paperSize.contains("80")
@@ -515,11 +702,13 @@ object ThermalReceiptFormatter {
 
         // 3. Company Header (Centered, Bold, 3x Magnification)
         out.write(CMD_ALIGN_CENTER)
-        val companyLines = splitCompanyLines(header?.companyName, if (is80mm) "POS & INVOICE STATION" else "POS STATION")
-        val hasBangla = companyLines.any { containsBangla(it) }
+        val defaultCompanyName = if (isBn) "পিওএস স্টেশন" else if (is80mm) "POS & INVOICE STATION" else "POS STATION"
+        val companyLines = splitCompanyLines(header?.companyName, defaultCompanyName)
+        val displayCompanyLines = if (isBn) companyLines.map { BengaliTransliterationEngine.transliterate(it) } else companyLines
+        val hasBangla = displayCompanyLines.any { containsBangla(it) }
         if (hasBangla) {
             val headerTextSize = if (is80mm) 36f else 30f
-            companyLines.forEach { line ->
+            displayCompanyLines.forEach { line ->
                 val raster = renderTextToRaster(
                     text = line,
                     widthDots = widthDots,
@@ -537,7 +726,7 @@ object ThermalReceiptFormatter {
         } else {
             out.write(CMD_BOLD_ON)
             out.write(CMD_TEXT_TRIPLE_SIZE)
-            companyLines.forEach { line ->
+            displayCompanyLines.forEach { line ->
                 out.write(line.toByteArray(Charsets.UTF_8))
                 out.write(0x0A)
             }
@@ -546,9 +735,16 @@ object ThermalReceiptFormatter {
         }
 
         val branchInfo = if (!header?.branchName.isNullOrBlank()) {
-            if (!header.branchNumber.isNullOrBlank()) "${header.branchName} (${header.branchNumber})" else header.branchName
+            val bName = if (isBn) BengaliTransliterationEngine.transliterate(header.branchName) else header.branchName
+            val bNum = if (isBn && !header.branchNumber.isNullOrBlank()) {
+                DateTimeUtils.toBengaliNumerals(header.branchNumber)
+            } else {
+                header.branchNumber
+            }
+            if (!bNum.isNullOrBlank()) "$bName ($bNum)" else bName
         } else if (!header?.branchNumber.isNullOrBlank()) {
-            "Branch #${header.branchNumber}"
+            val bNum = if (isBn) DateTimeUtils.toBengaliNumerals(header.branchNumber) else header.branchNumber
+            if (isBn) "শাখা #$bNum" else "Branch #${header.branchNumber}"
         } else ""
         if (branchInfo.isNotBlank()) {
             if (containsBangla(branchInfo)) {
@@ -578,10 +774,15 @@ object ThermalReceiptFormatter {
 
         val address = header?.address ?: ""
         if (address.isNotBlank()) {
-            if (containsBangla(address)) {
+            val displayAddress = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(address))
+            } else {
+                address
+            }
+            if (containsBangla(displayAddress)) {
                 out.write(CMD_ALIGN_CENTER)
                 val raster = renderTextToRaster(
-                    text = address.trim(),
+                    text = displayAddress.trim(),
                     widthDots = widthDots,
                     textSizePx = 23f,
                     isBold = false,
@@ -590,13 +791,13 @@ object ThermalReceiptFormatter {
                 if (raster != null) {
                     out.write(raster)
                 } else {
-                    wrapLinesForWidth(address, width).forEach { line ->
+                    wrapLinesForWidth(displayAddress, width).forEach { line ->
                         out.write(line.toByteArray(Charsets.UTF_8))
                         out.write(0x0A)
                     }
                 }
             } else {
-                wrapLinesForWidth(address, width).forEach { line ->
+                wrapLinesForWidth(displayAddress, width).forEach { line ->
                     out.write(line.toByteArray(Charsets.UTF_8))
                     out.write(0x0A)
                 }
@@ -605,7 +806,14 @@ object ThermalReceiptFormatter {
 
         val phone = header?.phoneNumber ?: ""
         if (phone.isNotBlank()) {
-            val phoneText = if (phone.startsWith("Phone") || phone.startsWith("ফোন")) phone else if (isBn) "ফোন: $phone" else "Phone: $phone"
+            val phoneVal = if (isBn) DateTimeUtils.toBengaliNumerals(phone) else phone
+            val phoneText = if (phone.startsWith("Phone") || phone.startsWith("ফোন")) {
+                phoneVal
+            } else if (isBn) {
+                "ফোন: $phoneVal"
+            } else {
+                "Phone: $phone"
+            }
             if (containsBangla(phoneText)) {
                 out.write(CMD_ALIGN_CENTER)
                 val raster = renderTextToRaster(
@@ -631,9 +839,34 @@ object ThermalReceiptFormatter {
             }
         }
 
+        // Invoice Title
+        if (isBn) {
+            val titleRaster = renderTextToRaster(
+                text = "ক্যাশ মেমো",
+                widthDots = widthDots,
+                textSizePx = if (is80mm) 30f else 26f,
+                isBold = true,
+                alignment = Layout.Alignment.ALIGN_CENTER
+            )
+            if (titleRaster != null) {
+                out.write(titleRaster)
+            }
+        }
+
         // Metadata section (Independently Centered)
-        val dateFormat = SimpleDateFormat("dd-MMM-yyyy hh:mma", Locale.US)
-        val dateStr = dateFormat.format(Date(invoice.dateTime))
+        val orderIdVal = if (isBn) DateTimeUtils.toBengaliNumerals(invoice.orderId) else invoice.orderId
+        val dateStr = if (isBn) {
+            DateTimeUtils.formatReceiptDateTime(invoice.dateTime)
+        } else {
+            val dateFormat = SimpleDateFormat("dd-MMM-yyyy hh:mma", Locale.US)
+            dateFormat.format(Date(invoice.dateTime))
+        }
+        val operatorVal = if (isBn) BengaliTransliterationEngine.transliterate(invoice.operatorName) else invoice.operatorName
+        val customerVal = if (isBn) {
+            DateTimeUtils.toBengaliNumerals(BengaliTransliterationEngine.transliterate(invoice.customerInfo))
+        } else {
+            invoice.customerInfo
+        }
 
         fun writeCenteredMetadata(text: String) {
             out.write(CMD_ALIGN_CENTER)
@@ -655,11 +888,11 @@ object ThermalReceiptFormatter {
             }
         }
 
-        writeCenteredMetadata("$orderIdLabel: #${invoice.orderId}")
+        writeCenteredMetadata("$orderIdLabel: #$orderIdVal")
         writeCenteredMetadata("$dateLabel: $dateStr")
-        writeCenteredMetadata("$operatorLabel: ${invoice.operatorName}")
+        writeCenteredMetadata("$operatorLabel: $operatorVal")
         if (!isCustomerInfoOmitted(invoice.customerInfo)) {
-            writeCenteredMetadata("$customerLabel: ${invoice.customerInfo}")
+            writeCenteredMetadata("$customerLabel: $customerVal")
         }
 
         // STRAIGHT SEPARATOR 1 (Between metadata and item table header)
@@ -716,11 +949,19 @@ object ThermalReceiptFormatter {
 
         // Line Items
         for (item in lines) {
-            val name = item.itemName
-            val qty = item.quantityStr
-            val unit = item.unit
-            val rate = FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa)
-            val total = FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
+            val name = if (isBn) BengaliTransliterationEngine.transliterate(item.itemName) else item.itemName
+            val unit = if (isBn) localizeUnit(item.unit, item.itemType) else item.unit
+            val qty = if (isBn) DateTimeUtils.toBengaliNumerals(item.quantityStr) else item.quantityStr
+            val rate = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa))
+            } else {
+                FinancialCalculationEngine.formatPaisaToBdt(item.unitPricePaisa)
+            }
+            val total = if (isBn) {
+                DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa))
+            } else {
+                FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
+            }
             val itemHasBangla = containsBangla(name) || containsBangla(unit) || containsBangla(qty) || containsBangla(rate) || containsBangla(total)
 
             if (is80mm) {
@@ -729,21 +970,21 @@ object ThermalReceiptFormatter {
                     if (raster != null) {
                         out.write(raster)
                     } else {
-                        out.write(format80mmNativeItemLine(name, qty, unit.take(4), rate, total).toByteArray(Charsets.UTF_8))
+                        out.write(format80mmNativeItemLine(name, qty, unit, rate, total).toByteArray(Charsets.UTF_8))
                     }
                 } else {
-                    out.write(format80mmNativeItemLine(name, qty, unit.take(4), rate, total).toByteArray(Charsets.UTF_8))
+                    out.write(format80mmNativeItemLine(name, qty, unit, rate, total).toByteArray(Charsets.UTF_8))
                 }
             } else {
                 if (itemHasBangla) {
-                    val raster = render58mmItemRowToRaster(name, qty, unit, rate, total, widthDots)
+                    val raster = render58mmItemRowToRaster(name, qty, unit, rate, total, widthDots, isBn)
                     if (raster != null) {
                         out.write(raster)
                     } else {
-                        out.write(format58mmNativeItemLine(name, qty, unit.take(4), rate, total, width).toByteArray(Charsets.UTF_8))
+                        out.write(format58mmNativeItemLine(name, qty, unit, rate, total, width, isBn).toByteArray(Charsets.UTF_8))
                     }
                 } else {
-                    out.write(format58mmNativeItemLine(name, qty, unit.take(4), rate, total, width).toByteArray(Charsets.UTF_8))
+                    out.write(format58mmNativeItemLine(name, qty, unit, rate, total, width, isBn).toByteArray(Charsets.UTF_8))
                 }
             }
         }
@@ -752,8 +993,9 @@ object ThermalReceiptFormatter {
         out.write(sepStraight.toByteArray(Charsets.UTF_8))
         out.write(0x0A)
 
-        // 14. Subtotal (In Item Name/Description column, amount in Total column)
-        val subtotalStr = FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)
+        // 14. Subtotal
+        val rawSubtotalStr = FinancialCalculationEngine.formatPaisaToBdt(invoice.rawTotalPaisa)
+        val subtotalStr = if (isBn) "${DateTimeUtils.toBengaliNumerals(rawSubtotalStr)} ৳" else rawSubtotalStr
         if (is80mm) {
             val subLine = format80mmSummaryLine(subTotalLabel, subtotalStr)
             if (containsBangla(subLine)) {
@@ -774,8 +1016,38 @@ object ThermalReceiptFormatter {
             }
         }
 
-        // 15. Rounded Total (In Item Name/Description column, amount in Total column)
-        val roundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
+        // Rounding Adjustment (only when non-zero)
+        val roundingDiffPaisa = FinancialCalculationEngine.calculateRoundingDifferencePaisa(invoice.rawTotalPaisa, invoice.roundedTotalBdt)
+        if (roundingDiffPaisa != 0L) {
+            val sign = if (roundingDiffPaisa > 0) "+" else "-"
+            val absPaisa = kotlin.math.abs(roundingDiffPaisa)
+            val absBdt = FinancialCalculationEngine.formatPaisaToBdt(absPaisa)
+            val roundingStr = if (isBn) "$sign${DateTimeUtils.toBengaliNumerals(absBdt)} ৳" else "$sign$absBdt"
+            val roundingLabel = if (isBn) "রাউন্ডিং সমন্বয়" else "Rounding Adj:"
+            if (is80mm) {
+                val roundLine = format80mmSummaryLine(roundingLabel, roundingStr)
+                if (containsBangla(roundLine)) {
+                    val raster = render80mmSummaryRowToRaster(roundingLabel, roundingStr, widthDots, isBold = false)
+                        ?: renderTextToRaster(roundLine, widthDots, textSizePx = 22f, isBold = false)
+                    if (raster != null) out.write(raster) else out.write("$roundLine\n".toByteArray(Charsets.UTF_8))
+                } else {
+                    out.write("$roundLine\n".toByteArray(Charsets.UTF_8))
+                }
+            } else {
+                val roundLine = format58mmSummaryLine(roundingLabel, roundingStr)
+                if (containsBangla(roundLine)) {
+                    val raster = render58mmSummaryRowToRaster(roundingLabel, roundingStr, widthDots, isBold = false)
+                        ?: renderTextToRaster(roundLine, widthDots, textSizePx = 22f, isBold = false)
+                    if (raster != null) out.write(raster) else out.write("$roundLine\n".toByteArray(Charsets.UTF_8))
+                } else {
+                    out.write("$roundLine\n".toByteArray(Charsets.UTF_8))
+                }
+            }
+        }
+
+        // 15. Rounded Total / Grand Total
+        val rawRoundedStr = FinancialCalculationEngine.formatWholeBdtToDisplay(invoice.roundedTotalBdt)
+        val roundedStr = if (isBn) "${DateTimeUtils.toBengaliNumerals(rawRoundedStr)} ৳" else rawRoundedStr
         if (is80mm) {
             val totalLine = format80mmSummaryLine(totalSummaryLabel, roundedStr)
             if (containsBangla(totalLine)) {
@@ -805,72 +1077,135 @@ object ThermalReceiptFormatter {
         }
 
         // Payment Status / Breakdown
-        val paidLabel = if (isBn) "জমা (Paid):" else "Paid:"
-        val dueLabel = if (isBn) "বাকি (Due):" else "Due:"
-        val paidAmountBdt = invoice.paidAmountBdt
-        val dueAmountBdt = maxOf(0L, invoice.roundedTotalBdt - paidAmountBdt)
+        val (paidAmountBdt, dueAmountBdt, effectiveFullPaid) = resolvePaymentBreakdown(invoice, isFullPaid)
 
-        if (isFullPaid || dueAmountBdt <= 0L) {
-            val raster = renderStatusStampRaster(
-                text = fullPaidText,
-                widthDots = widthDots,
-                isPaid = true,
-                is80mm = is80mm
-            ) ?: renderTextToRaster(
-                text = fullPaidText,
-                widthDots = widthDots,
-                textSizePx = 24f,
-                isBold = true,
-                alignment = Layout.Alignment.ALIGN_CENTER
-            )
-            if (raster != null) {
-                out.write(raster)
+        if (isBn) {
+            val paidStr = "${DateTimeUtils.toBengaliNumerals(paidAmountBdt.toString())} ৳"
+            val dueStr = "${DateTimeUtils.toBengaliNumerals(dueAmountBdt.toString())} ৳"
+            if (is80mm) {
+                val paidLine = format80mmSummaryLine("জমা", paidStr)
+                val dueLine = format80mmSummaryLine("বকেয়া", dueStr)
+                val rasterPaid = render80mmSummaryRowToRaster("জমা", paidStr, widthDots, isBold = false)
+                    ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
+                if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
+
+                val rasterDue = render80mmSummaryRowToRaster("বকেয়া", dueStr, widthDots, isBold = dueAmountBdt > 0L)
+                    ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = dueAmountBdt > 0L)
+                if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
             } else {
-                out.write(CMD_ALIGN_CENTER)
-                out.write(CMD_BOLD_ON)
-                out.write("$fullPaidText\n".toByteArray(Charsets.UTF_8))
-                out.write(CMD_BOLD_OFF)
+                val paidLine = format58mmSummaryLine("জমা", paidStr)
+                val dueLine = format58mmSummaryLine("বকেয়া", dueStr)
+                val rasterPaid = render58mmSummaryRowToRaster("জমা", paidStr, widthDots, isBold = false)
+                    ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
+                if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
+
+                val rasterDue = render58mmSummaryRowToRaster("বকেয়া", dueStr, widthDots, isBold = dueAmountBdt > 0L)
+                    ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = dueAmountBdt > 0L)
+                if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
+            }
+
+            if (effectiveFullPaid) {
+                val raster = renderStatusStampRaster(
+                    text = fullPaidText,
+                    widthDots = widthDots,
+                    isPaid = true,
+                    is80mm = is80mm
+                ) ?: renderTextToRaster(
+                    text = fullPaidText,
+                    widthDots = widthDots,
+                    textSizePx = 24f,
+                    isBold = true,
+                    alignment = Layout.Alignment.ALIGN_CENTER
+                )
+                if (raster != null) {
+                    out.write(raster)
+                } else {
+                    out.write(CMD_ALIGN_CENTER)
+                    out.write(CMD_BOLD_ON)
+                    out.write("$fullPaidText\n".toByteArray(Charsets.UTF_8))
+                    out.write(CMD_BOLD_OFF)
+                }
+            } else {
+                val dueStampText = "বকেয়া / DUE ✕"
+                val rasterDueStamp = renderStatusStampRaster(
+                    text = dueStampText,
+                    widthDots = widthDots,
+                    isPaid = false,
+                    is80mm = is80mm
+                )
+                if (rasterDueStamp != null) {
+                    out.write(rasterDueStamp)
+                } else {
+                    out.write(CMD_ALIGN_CENTER)
+                    out.write(CMD_BOLD_ON)
+                    out.write("*** $dueStampText ***\n".toByteArray(Charsets.UTF_8))
+                    out.write(CMD_BOLD_OFF)
+                }
             }
         } else {
-            val paidStr = "$paidAmountBdt ৳"
-            val dueStr = "$dueAmountBdt ৳"
-            if (is80mm) {
-                val paidLine = format80mmSummaryLine(paidLabel, paidStr)
-                val dueLine = format80mmSummaryLine(dueLabel, dueStr)
-                val rasterPaid = render80mmSummaryRowToRaster(paidLabel, paidStr, widthDots, isBold = false)
-                    ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
-                if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
-
-                val rasterDue = render80mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
-                    ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
-                if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
+            val paidLabel = "Paid:"
+            val dueLabel = "Due:"
+            if (effectiveFullPaid) {
+                val raster = renderStatusStampRaster(
+                    text = fullPaidText,
+                    widthDots = widthDots,
+                    isPaid = true,
+                    is80mm = is80mm
+                ) ?: renderTextToRaster(
+                    text = fullPaidText,
+                    widthDots = widthDots,
+                    textSizePx = 24f,
+                    isBold = true,
+                    alignment = Layout.Alignment.ALIGN_CENTER
+                )
+                if (raster != null) {
+                    out.write(raster)
+                } else {
+                    out.write(CMD_ALIGN_CENTER)
+                    out.write(CMD_BOLD_ON)
+                    out.write("$fullPaidText\n".toByteArray(Charsets.UTF_8))
+                    out.write(CMD_BOLD_OFF)
+                }
             } else {
-                val paidLine = format58mmSummaryLine(paidLabel, paidStr)
-                val dueLine = format58mmSummaryLine(dueLabel, dueStr)
-                val rasterPaid = render58mmSummaryRowToRaster(paidLabel, paidStr, widthDots, isBold = false)
-                    ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
-                if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
+                val paidStr = "$paidAmountBdt ৳"
+                val dueStr = "$dueAmountBdt ৳"
+                if (is80mm) {
+                    val paidLine = format80mmSummaryLine(paidLabel, paidStr)
+                    val dueLine = format80mmSummaryLine(dueLabel, dueStr)
+                    val rasterPaid = render80mmSummaryRowToRaster(paidLabel, paidStr, widthDots, isBold = false)
+                        ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
+                    if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
 
-                val rasterDue = render58mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
-                    ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
-                if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
-            }
+                    val rasterDue = render80mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
+                        ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
+                    if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
+                } else {
+                    val paidLine = format58mmSummaryLine(paidLabel, paidStr)
+                    val dueLine = format58mmSummaryLine(dueLabel, dueStr)
+                    val rasterPaid = render58mmSummaryRowToRaster(paidLabel, paidStr, widthDots, isBold = false)
+                        ?: renderTextToRaster(paidLine, widthDots, textSizePx = 22f, isBold = false)
+                    if (rasterPaid != null) out.write(rasterPaid) else out.write("$paidLine\n".toByteArray(Charsets.UTF_8))
 
-            // Visible DUE Stamp (Solid inverted high-contrast black box with white text)
-            val dueStampText = if (isBn) "বকেয়া / DUE ✕" else "DUE / UNPAID ✕"
-            val rasterDueStamp = renderStatusStampRaster(
-                text = dueStampText,
-                widthDots = widthDots,
-                isPaid = false,
-                is80mm = is80mm
-            )
-            if (rasterDueStamp != null) {
-                out.write(rasterDueStamp)
-            } else {
-                out.write(CMD_ALIGN_CENTER)
-                out.write(CMD_BOLD_ON)
-                out.write("*** $dueStampText ***\n".toByteArray(Charsets.UTF_8))
-                out.write(CMD_BOLD_OFF)
+                    val rasterDue = render58mmSummaryRowToRaster(dueLabel, dueStr, widthDots, isBold = true)
+                        ?: renderTextToRaster(dueLine, widthDots, textSizePx = 24f, isBold = true)
+                    if (rasterDue != null) out.write(rasterDue) else out.write("$dueLine\n".toByteArray(Charsets.UTF_8))
+                }
+
+                val dueStampText = "DUE / UNPAID ✕"
+                val rasterDueStamp = renderStatusStampRaster(
+                    text = dueStampText,
+                    widthDots = widthDots,
+                    isPaid = false,
+                    is80mm = is80mm
+                )
+                if (rasterDueStamp != null) {
+                    out.write(rasterDueStamp)
+                } else {
+                    out.write(CMD_ALIGN_CENTER)
+                    out.write(CMD_BOLD_ON)
+                    out.write("*** $dueStampText ***\n".toByteArray(Charsets.UTF_8))
+                    out.write(CMD_BOLD_OFF)
+                }
             }
         }
 
@@ -934,56 +1269,38 @@ object ThermalReceiptFormatter {
 
     private fun format80mmNativeItemLine(name: String, qty: String, unit: String, rate: String, total: String): String {
         val sb = StringBuilder()
-        if (getVisualWidth(name) <= 18) {
-            sb.append(
-                String.format(
-                    Locale.US,
-                    "%-18s %5s %-5s %8s %8s\n",
-                    name,
-                    qty.take(5),
-                    unit,
-                    rate.take(8),
-                    total.take(8)
-                )
-            )
-        } else {
-            val nameLines = wrapText(name, 18)
-            sb.append(
-                String.format(
-                    Locale.US,
-                    "%-18s %5s %-5s %8s %8s\n",
-                    nameLines.firstOrNull() ?: name,
-                    qty.take(5),
-                    unit,
-                    rate.take(8),
-                    total.take(8)
-                )
-            )
-            for (i in 1 until nameLines.size) {
-                sb.append("${nameLines[i]}\n")
-            }
+        val displayUnit = if (!containsBangla(unit) && unit.length > 5) unit.take(5) else unit
+        val nameLines = if (getVisualWidth(name) <= 18) listOf(name) else wrapText(name, 18)
+        sb.append(
+            padRightVisual(nameLines.firstOrNull() ?: name, 18) + " " +
+                padLeftVisual(qty, 5) + " " +
+                padRightVisual(displayUnit, 5) + " " +
+                padLeftVisual(rate, 8) + " " +
+                padLeftVisual(total, 8) + "\n"
+        )
+        for (i in 1 until nameLines.size) {
+            sb.append("${nameLines[i]}\n")
         }
         return sb.toString()
     }
 
-    private fun format58mmNativeItemLine(name: String, qty: String, unit: String, rate: String, total: String, width: Int): String {
+    private fun format58mmNativeItemLine(name: String, qty: String, unit: String, rate: String, total: String, width: Int, isBn: Boolean = false): String {
         val sb = StringBuilder()
-        if (getVisualWidth(name) <= 12) {
+        val isBnLine = isBn || containsBangla(total) || containsBangla(name) || containsBangla(unit) || containsBangla(rate) || containsBangla(qty)
+        if (!isBnLine && getVisualWidth(name) <= 12 && qty.length <= 4 && unit.isBlank() && rate.length <= 6 && total.length <= 7) {
             sb.append(
-                String.format(
-                    Locale.US,
-                    "%-12s %4s %6s %7s\n",
-                    name,
-                    qty.take(4),
-                    rate.take(6),
-                    total.take(7)
-                )
+                padRightVisual(name, 12) + " " +
+                    padLeftVisual(qty, 4) + " " +
+                    padLeftVisual(rate, 6) + " " +
+                    padLeftVisual(total, 7) + "\n"
             )
         } else {
             val wrapped = wrapText(name, width)
             wrapped.forEach { sb.append("$it\n") }
-            val detailLeft = "  ${qty}${unit} x ${rate}"
-            sb.append("${padRow(detailLeft, "$total BDT", width)}\n")
+            val unitStr = if (unit.isNotBlank()) " $unit" else ""
+            val detailLeft = "  ${qty}${unitStr} x ${rate}"
+            val totalCurrency = if (isBnLine) "৳" else "BDT"
+            sb.append("${padRow(detailLeft, "$total $totalCurrency", width)}\n")
         }
         return sb.toString()
     }
@@ -1365,50 +1682,103 @@ object ThermalReceiptFormatter {
                 typeface = Typeface.DEFAULT
             }
 
-            // Column 1: Item description (up to 240 dots)
-            val nameWidth = 240
-            val nameLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                StaticLayout.Builder.obtain(name, 0, name.length, textPaint, nameWidth)
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .setLineSpacing(0f, 1.1f)
-                    .setIncludePad(true)
-                    .build()
+            // Measure columns to prevent overlap on wide Bengali units (e.g. ঘনমিটার) or large rates/quantities
+            val qtyW = textPaint.measureText(qty)
+            val unitW = textPaint.measureText(unit)
+            val rateW = textPaint.measureText(rate)
+            val totalW = textPaint.measureText(total)
+
+            val fitsInlineColumns = qtyW <= 60f && unitW <= 84f && rateW <= 86f && totalW <= 88f
+
+            if (fitsInlineColumns) {
+                // Column 1: Item description (x = 2..226), remaining width allocated cleanly across Qty, Unit, Rate, Total
+                val nameWidth = 224
+                val nameLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    StaticLayout.Builder.obtain(name, 0, name.length, textPaint, nameWidth)
+                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                        .setLineSpacing(0f, 1.1f)
+                        .setIncludePad(true)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    StaticLayout(name, textPaint, nameWidth, Layout.Alignment.ALIGN_NORMAL, 1.1f, 0f, true)
+                }
+
+                val rowHeight = maxOf(nameLayout.height, 28) + 4
+                val bitmap = Bitmap.createBitmap(widthDots, rowHeight, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(Color.WHITE)
+
+                canvas.save()
+                canvas.translate(2f, 2f)
+                nameLayout.draw(canvas)
+                canvas.restore()
+
+                val baseline = 22f
+                // Qty: 232..292, Unit: 300..384, Rate: 390..476, Total: 484..572
+                textPaint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(qty, 292f, baseline, textPaint)
+
+                textPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText(unit, 300f, baseline, textPaint)
+
+                textPaint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(rate, 476f, baseline, textPaint)
+
+                textPaint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(total, (widthDots - 4).toFloat(), baseline, textPaint)
+
+                bitmapToEscPosRaster(bitmap, widthDots)
             } else {
-                @Suppress("DEPRECATION")
-                StaticLayout(name, textPaint, nameWidth, Layout.Alignment.ALIGN_NORMAL, 1.1f, 0f, true)
+                // Overflow fallback: wrap full product name on top, then render numeric/unit details cleanly on second baseline
+                val nameWidth = widthDots - 8
+                val nameLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    StaticLayout.Builder.obtain(name, 0, name.length, textPaint, nameWidth)
+                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                        .setLineSpacing(0f, 1.1f)
+                        .setIncludePad(true)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    StaticLayout(name, textPaint, nameWidth, Layout.Alignment.ALIGN_NORMAL, 1.1f, 0f, true)
+                }
+
+                val rowHeight = nameLayout.height + 28 + 4
+                val bitmap = Bitmap.createBitmap(widthDots, rowHeight, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(Color.WHITE)
+
+                canvas.save()
+                canvas.translate(4f, 2f)
+                nameLayout.draw(canvas)
+                canvas.restore()
+
+                val baseline2 = nameLayout.height + 22f
+                val unitPart = if (unit.isNotBlank()) " $unit" else ""
+                val leftDetail = "  ${qty}${unitPart} x $rate"
+                val leftW = textPaint.measureText(leftDetail)
+                if (leftW + totalW + 16f <= widthDots - 8) {
+                    textPaint.textAlign = Paint.Align.LEFT
+                    canvas.drawText(leftDetail, 4f, baseline2, textPaint)
+                    textPaint.textAlign = Paint.Align.RIGHT
+                    canvas.drawText(total, (widthDots - 4).toFloat(), baseline2, textPaint)
+                } else {
+                    val bitmap2 = Bitmap.createBitmap(widthDots, nameLayout.height + 50, Bitmap.Config.ARGB_8888)
+                    val canvas2 = Canvas(bitmap2)
+                    canvas2.drawColor(Color.WHITE)
+                    canvas2.save()
+                    canvas2.translate(4f, 2f)
+                    nameLayout.draw(canvas2)
+                    canvas2.restore()
+                    textPaint.textAlign = Paint.Align.LEFT
+                    canvas2.drawText(leftDetail, 4f, nameLayout.height + 20f, textPaint)
+                    textPaint.textAlign = Paint.Align.RIGHT
+                    canvas2.drawText(total, (widthDots - 4).toFloat(), nameLayout.height + 44f, textPaint)
+                    return bitmapToEscPosRaster(bitmap2, widthDots)
+                }
+
+                bitmapToEscPosRaster(bitmap, widthDots)
             }
-
-            val rowHeight = maxOf(nameLayout.height, 28) + 4
-            val bitmap = Bitmap.createBitmap(widthDots, rowHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(Color.WHITE)
-
-            // Draw name
-            canvas.save()
-            canvas.translate(2f, 2f)
-            nameLayout.draw(canvas)
-            canvas.restore()
-
-            // Baseline for columns on the first line
-            val baseline = 22f
-
-            // Draw Qty (right-aligned at 305)
-            textPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(qty, 305f, baseline, textPaint)
-
-            // Draw Unit (left-aligned at 318)
-            textPaint.textAlign = Paint.Align.LEFT
-            canvas.drawText(unit, 318f, baseline, textPaint)
-
-            // Draw Rate (right-aligned at 460)
-            textPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(rate, 460f, baseline, textPaint)
-
-            // Draw Total (right-aligned at 572)
-            textPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(total, 572f, baseline, textPaint)
-
-            bitmapToEscPosRaster(bitmap, widthDots)
         } catch (t: Throwable) {
             null
         }
@@ -1425,7 +1795,8 @@ object ThermalReceiptFormatter {
         unit: String,
         rate: String,
         total: String,
-        widthDots: Int = DOTS_58MM
+        widthDots: Int = DOTS_58MM,
+        isBn: Boolean = false
     ): ByteArray? {
         return try {
             val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1447,7 +1818,15 @@ object ThermalReceiptFormatter {
                 StaticLayout(name, textPaint, nameWidth, Layout.Alignment.ALIGN_NORMAL, 1.1f, 0f, true)
             }
 
-            val line2Height = 26
+            val unitStr = if (unit.isNotBlank()) " $unit" else ""
+            val detailLeft = "  ${qty}${unitStr} x $rate"
+            val isBnTotal = isBn || containsBangla(total) || containsBangla(name) || containsBangla(unit) || containsBangla(qty) || containsBangla(rate)
+            val totalRight = if (isBnTotal) "$total ৳" else "$total BDT"
+
+            val leftWidth = textPaint.measureText(detailLeft)
+            val rightWidth = textPaint.measureText(totalRight)
+            val needsTwoLines = (leftWidth + rightWidth + 12f) > (widthDots - 8)
+            val line2Height = if (needsTwoLines) 46 else 26
             val rowHeight = nameLayout.height + line2Height + 4
             val bitmap = Bitmap.createBitmap(widthDots, rowHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
@@ -1459,16 +1838,20 @@ object ThermalReceiptFormatter {
             nameLayout.draw(canvas)
             canvas.restore()
 
-            // Draw details line: "  ${qty}${unit} x ${rate}        ${total} BDT"
-            val line2Baseline = nameLayout.height + 20f
-            val detailLeft = "  ${qty}${unit} x $rate"
-            val totalRight = "$total BDT"
-
-            textPaint.textAlign = Paint.Align.LEFT
-            canvas.drawText(detailLeft, 4f, line2Baseline, textPaint)
-
-            textPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(totalRight, (widthDots - 4).toFloat(), line2Baseline, textPaint)
+            if (needsTwoLines) {
+                val line2Baseline = nameLayout.height + 18f
+                val line3Baseline = nameLayout.height + 40f
+                textPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText(detailLeft, 4f, line2Baseline, textPaint)
+                textPaint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(totalRight, (widthDots - 4).toFloat(), line3Baseline, textPaint)
+            } else {
+                val line2Baseline = nameLayout.height + 20f
+                textPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText(detailLeft, 4f, line2Baseline, textPaint)
+                textPaint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(totalRight, (widthDots - 4).toFloat(), line2Baseline, textPaint)
+            }
 
             bitmapToEscPosRaster(bitmap, widthDots)
         } catch (t: Throwable) {

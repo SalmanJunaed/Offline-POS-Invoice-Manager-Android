@@ -1517,10 +1517,11 @@ fun HistoryInvoiceCard(
                                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
                                     )
                                     val qtyBn = DateTimeUtils.toBengaliNumerals(line.quantityStr)
-                                    val unitBn = localizeUnit(line.unit)
+                                    val unitBn = localizeUnit(line.unit, line.itemType)
+                                    val qtyWithUnit = if (unitBn.isNotBlank()) "$qtyBn $unitBn" else qtyBn
                                     val rateBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa))
                                     Text(
-                                        text = "$qtyBn $unitBn @ $rateBn ৳",
+                                        text = "$qtyWithUnit @ $rateBn ৳",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -2172,10 +2173,11 @@ fun InvoiceDetailsDialog(
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
                                 )
                                 val qtyBn = DateTimeUtils.toBengaliNumerals(line.quantityStr)
-                                val unitBn = localizeUnit(line.unit)
+                                val unitBn = localizeUnit(line.unit, line.itemType)
+                                val qtyWithUnit = if (unitBn.isNotBlank()) "$qtyBn $unitBn" else qtyBn
                                 val rateBn = DateTimeUtils.toBengaliNumerals(FinancialCalculationEngine.formatPaisaToBdt(line.unitPricePaisa))
                                 Text(
-                                    text = "$qtyBn $unitBn @ $rateBn ৳",
+                                    text = "$qtyWithUnit @ $rateBn ৳",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

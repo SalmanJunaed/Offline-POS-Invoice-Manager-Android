@@ -891,18 +891,34 @@ private fun ReceiptBodyWithFullPaidBadge(
     }
 }
 
-fun localizeUnit(unit: String): String {
+fun localizeUnit(unit: String, itemType: String? = null): String {
+    if (itemType != null && (itemType.trim().equals("Service", ignoreCase = true) || itemType.trim() == "সার্ভিস")) {
+        return ""
+    }
     val trimmed = unit.trim()
+    if (trimmed.isEmpty()) return ""
+
     return when (trimmed.lowercase(Locale.ROOT)) {
-        "l", "ltr", "liter", "litre" -> "লিটার"
-        "kg" -> "কেজি"
-        "gm", "g" -> "গ্রাম"
-        "pcs", "pc" -> "পিস"
-        "unit" -> "একক"
-        "pack" -> "প্যাক"
-        "box" -> "বক্স"
-        "ml" -> "মিলি"
-        "" -> ""
+        // 1. Liter / L / Ltr -> লি.
+        "l", "ltr", "liter", "litre", "লিটার", "লি.", "লি" -> "লি."
+
+        // 2. Piece / Pcs / Unit / Quantity -> টি
+        "piece", "pieces", "pcs", "pc", "unit", "quantity", "qty", "টি", "পিস", "একক" -> "টি"
+
+        // 3. Service -> No unit suffix
+        "service", "services", "সার্ভিস" -> ""
+
+        // 4. CNG / Volume: CFT -> ঘনফুট, m³ -> ঘনমিটার
+        "cft", "cubic foot", "cubic feet", "cu ft", "cuft", "ঘনফুট", "ঘন ফুট" -> "ঘনফুট"
+        "m³", "m3", "cubic metre", "cubic meter", "cu m", "cum", "ঘনমিটার", "ঘন মিটার" -> "ঘনমিটার"
+
+        // 5. Preserved Bengali units: Kg, Gram, Pack, Box, ML
+        "kg", "কেজি" -> "কেজি"
+        "gm", "g", "gram", "grams", "গ্রাম" -> "গ্রাম"
+        "pack", "packs", "pkt", "প্যাক" -> "প্যাক"
+        "box", "boxes", "বক্স" -> "বক্স"
+        "ml", "মিলি" -> "মিলি"
+
         else -> BengaliTransliterationEngine.transliterate(trimmed)
     }
 }
@@ -911,11 +927,22 @@ fun buildEffectivePreviewSummaryRows(
     parsedSummaryRows: List<VoucherSummaryRow>,
     isFullPaid: Boolean
 ): List<VoucherSummaryRow> {
-    val subtotalRow = parsedSummaryRows.firstOrNull {
-        it.label.contains("উপমোট") || it.label.contains("উপ-মোট") || it.label.contains("Sub Total", ignoreCase = true)
+    val isSubtotalLabel: (String) -> Boolean = { label ->
+        label.contains("উপমোট") || label.contains("উপ-মোট") ||
+            label.contains("Sub Total", ignoreCase = true) || label.contains("Subtotal", ignoreCase = true)
     }
-    val totalRow = parsedSummaryRows.firstOrNull {
-        it.label.contains("মোট") || it.label.contains("সর্বমোট") || it.label.contains("TOTAL", ignoreCase = true) || it.label.contains("NET PAYABLE", ignoreCase = true)
+    val isRoundingLabel: (String) -> Boolean = { label ->
+        label.contains("রাউন্ডিং") || label.contains("Rounding", ignoreCase = true)
+    }
+    val subtotalRow = parsedSummaryRows.firstOrNull { isSubtotalLabel(it.label) }
+    val roundingRow = parsedSummaryRows.firstOrNull { isRoundingLabel(it.label) }
+    val totalRow = parsedSummaryRows.firstOrNull { row ->
+        !isSubtotalLabel(row.label) && !isRoundingLabel(row.label) && (
+            row.label.contains("সর্বমোট") || row.label.contains("মোট") ||
+                row.label.contains("Grand Total", ignoreCase = true) ||
+                row.label.contains("TOTAL", ignoreCase = true) ||
+                row.label.contains("NET PAYABLE", ignoreCase = true)
+        )
     }
     val paidRow = parsedSummaryRows.firstOrNull {
         it.label.contains("জমা") || it.label.contains("পরিশোধ") || it.label.contains("Paid", ignoreCase = true)
@@ -930,6 +957,12 @@ fun buildEffectivePreviewSummaryRows(
         val cleanAmount = subtotalRow.amount.replace("৳", "").replace("BDT", "", ignoreCase = true).trim()
         val bnAmount = "৳${DateTimeUtils.toBengaliNumerals(cleanAmount)}"
         result.add(VoucherSummaryRow(label = "উপ-মোট", amount = bnAmount, isBold = false, isDue = false))
+    }
+
+    if (roundingRow != null) {
+        val cleanRounding = roundingRow.amount.replace("৳", "").replace("BDT", "", ignoreCase = true).trim()
+        val bnRounding = DateTimeUtils.toBengaliNumerals(cleanRounding)
+        result.add(VoucherSummaryRow(label = "রাউন্ডিং সমন্বয়", amount = bnRounding, isBold = false, isDue = false))
     }
 
     val totalAmountRaw = totalRow?.amount?.replace("৳", "")?.replace("BDT", "", ignoreCase = true)?.trim() ?: "0.00"
@@ -947,16 +980,18 @@ fun buildEffectivePreviewSummaryRows(
         effectiveDueStr = dueAmountRaw
     } else if (paidAmountRaw != null) {
         effectivePaidStr = paidAmountRaw
-        val totalDouble = totalAmountRaw.toDoubleOrNull() ?: 0.0
-        val paidDouble = paidAmountRaw.toDoubleOrNull() ?: 0.0
-        val calculatedDue = (totalDouble - paidDouble).coerceAtLeast(0.0)
-        effectiveDueStr = String.format(Locale.US, "%.2f", calculatedDue)
+        val totalBd = DateTimeUtils.toAsciiDigits(totalAmountRaw).toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
+        val paidBd = DateTimeUtils.toAsciiDigits(paidAmountRaw).toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
+        val calculatedDue = totalBd.subtract(paidBd).max(java.math.BigDecimal.ZERO)
+            .setScale(2, java.math.RoundingMode.HALF_UP)
+        effectiveDueStr = calculatedDue.toPlainString()
     } else if (dueAmountRaw != null) {
         effectiveDueStr = dueAmountRaw
-        val totalDouble = totalAmountRaw.toDoubleOrNull() ?: 0.0
-        val dueDouble = dueAmountRaw.toDoubleOrNull() ?: 0.0
-        val calculatedPaid = (totalDouble - dueDouble).coerceAtLeast(0.0)
-        effectivePaidStr = String.format(Locale.US, "%.2f", calculatedPaid)
+        val totalBd = DateTimeUtils.toAsciiDigits(totalAmountRaw).toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
+        val dueBd = DateTimeUtils.toAsciiDigits(dueAmountRaw).toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
+        val calculatedPaid = totalBd.subtract(dueBd).max(java.math.BigDecimal.ZERO)
+            .setScale(2, java.math.RoundingMode.HALF_UP)
+        effectivePaidStr = calculatedPaid.toPlainString()
     } else if (isFullPaid) {
         effectivePaidStr = totalAmountRaw
         effectiveDueStr = "0.00"
@@ -1365,7 +1400,7 @@ private fun VoucherItemTable(
 }
 
 private val DETAIL_58MM_REGEX = Regex(
-    """^\s+(.+?)\s+x\s+([\d\u09E6-\u09EF]+(?:\.[\d\u09E6-\u09EF]*)?)\s+([\d\u09E6-\u09EF]+(?:\.[\d\u09E6-\u09EF]*)?)\s*(?:BDT)?\s*$"""
+    """^\s+(.+?)\s+x\s+([\d\u09E6-\u09EF]+(?:\.[\d\u09E6-\u09EF]*)?)\s+([\d\u09E6-\u09EF]+(?:\.[\d\u09E6-\u09EF]*)?)\s*(?:BDT|৳)?\s*$"""
 )
 
 private val SINGLE_58MM_REGEX = Regex(
@@ -1447,40 +1482,83 @@ fun parseReceiptSectionsForPreview(
             continue
         }
 
-        val isSubTotal = trimmed.startsWith("Sub Total", ignoreCase = true) || trimmed.startsWith("উপমোট")
-        val isTotal = trimmed.startsWith("TOTAL", ignoreCase = true) ||
-                trimmed.startsWith("NET PAYABLE", ignoreCase = true) ||
-                trimmed.startsWith("মোট") ||
-                trimmed.startsWith("সর্বমোট")
-        val isPaidRow = trimmed.startsWith("Paid:", ignoreCase = true) ||
-                trimmed.startsWith("জমা (Paid):") ||
-                trimmed.startsWith("জমা:") ||
-                trimmed.startsWith("পরিশোধ:") ||
-                trimmed.startsWith("পরিশোধিত:")
-        val isDueRow = trimmed.startsWith("Due:", ignoreCase = true) ||
-                trimmed.startsWith("বাকি (Due):") ||
-                trimmed.startsWith("বাকি:") ||
-                trimmed.startsWith("বকেয়া:") ||
-                trimmed.startsWith("বকেয়া:")
+        val amount = extractAmountFromSummaryLine(trimmed)
+        val hasNumericAmount = amount.any { it in '0'..'9' || it in '\u09E6'..'\u09EF' }
+        if (!hasNumericAmount) {
+            break
+        }
+
+        fun matchesPrefix(prefix: String, ignoreCase: Boolean = false): Boolean {
+            if (!trimmed.startsWith(prefix, ignoreCase = ignoreCase)) return false
+            if (trimmed.length == prefix.length) return true
+            val next = trimmed[prefix.length]
+            return next == ':' || next.isWhitespace()
+        }
+
+        val isSubTotal = matchesPrefix("Sub Total", ignoreCase = true) ||
+                matchesPrefix("Subtotal", ignoreCase = true) ||
+                matchesPrefix("উপ-মোট") ||
+                matchesPrefix("উপমোট")
+        val isRounding = matchesPrefix("Rounding Adj", ignoreCase = true) ||
+                matchesPrefix("রাউন্ডিং সমন্বয়")
+        val isTotal = !isSubTotal && !isRounding && (
+                matchesPrefix("Grand Total", ignoreCase = true) ||
+                        matchesPrefix("TOTAL", ignoreCase = true) ||
+                        matchesPrefix("NET PAYABLE", ignoreCase = true) ||
+                        matchesPrefix("সর্বমোট প্রদেয়") ||
+                        matchesPrefix("সর্বমোট") ||
+                        matchesPrefix("মোট")
+                )
+        val isPaidRow = matchesPrefix("Paid", ignoreCase = true) ||
+                matchesPrefix("জমা (Paid)") ||
+                matchesPrefix("জমা") ||
+                matchesPrefix("পরিশোধিত") ||
+                matchesPrefix("পরিশোধ")
+        val isDueRow = matchesPrefix("Due", ignoreCase = true) ||
+                matchesPrefix("বাকি (Due)") ||
+                matchesPrefix("বাকি") ||
+                matchesPrefix("বকেয়া") ||
+                matchesPrefix("বকেয়া")
 
         if (isSubTotal) {
-            val amount = extractAmountFromSummaryLine(trimmed)
-            val label = if (trimmed.startsWith("উপমোট")) "উপমোট" else "Sub Total"
+            val label = when {
+                matchesPrefix("উপ-মোট") -> "উপ-মোট"
+                matchesPrefix("উপমোট") -> "উপমোট"
+                else -> "Sub Total"
+            }
+            summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = false))
+            postTableStartIdx = idx + 1
+        } else if (isRounding) {
+            val label = if (matchesPrefix("রাউন্ডিং সমন্বয়")) "রাউন্ডিং সমন্বয়" else "Rounding Adj:"
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = false))
             postTableStartIdx = idx + 1
         } else if (isTotal) {
-            val amount = extractAmountFromSummaryLine(trimmed)
-            val label = if (trimmed.startsWith("মোট") || trimmed.startsWith("সর্বমোট")) "মোট" else "TOTAL"
+            val label = when {
+                matchesPrefix("সর্বমোট প্রদেয়") -> "সর্বমোট প্রদেয়"
+                matchesPrefix("সর্বমোট") -> "সর্বমোট"
+                matchesPrefix("মোট") -> "মোট"
+                matchesPrefix("Grand Total", ignoreCase = true) -> "Grand Total"
+                else -> "TOTAL"
+            }
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = true))
             postTableStartIdx = idx + 1
         } else if (isPaidRow) {
-            val amount = extractAmountFromSummaryLine(trimmed)
-            val label = if (trimmed.startsWith("Paid:", ignoreCase = true)) "Paid:" else "জমা (Paid):"
+            val label = when {
+                matchesPrefix("Paid", ignoreCase = true) -> "Paid:"
+                matchesPrefix("জমা (Paid)") -> "জমা (Paid):"
+                matchesPrefix("পরিশোধিত") -> "পরিশোধিত"
+                matchesPrefix("পরিশোধ") -> "পরিশোধ"
+                else -> "জমা"
+            }
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = false, isDue = false))
             postTableStartIdx = idx + 1
         } else if (isDueRow) {
-            val amount = extractAmountFromSummaryLine(trimmed)
-            val label = if (trimmed.startsWith("Due:", ignoreCase = true)) "Due:" else "বাকি (Due):"
+            val label = when {
+                matchesPrefix("Due", ignoreCase = true) -> "Due:"
+                matchesPrefix("বাকি (Due)") -> "বাকি (Due):"
+                matchesPrefix("বাকি") -> "বাকি"
+                else -> "বকেয়া"
+            }
             summaryRows.add(VoucherSummaryRow(label = label, amount = amount, isBold = true, isDue = true))
             postTableStartIdx = idx + 1
         } else {
@@ -1499,15 +1577,18 @@ fun parseReceiptSectionsForPreview(
                 VoucherItemTableRow(
                     itemName = item.itemName,
                     qty = item.quantityStr.trim(),
-                    unit = item.unit.trim().take(5),
+                    unit = if (item.itemType.equals("Service", ignoreCase = true)) "Service" else item.unit.trim(),
                     rate = rateStr,
                     total = totalStr
                 )
             } else {
+                val unitFormatted = localizeUnit(item.unit, item.itemType)
+                val qtyStr = item.quantityStr.trim()
+                val qtyDisplay = if (unitFormatted.isNotBlank()) "$qtyStr $unitFormatted" else qtyStr
                 VoucherItemTableRow(
                     itemName = item.itemName,
-                    qty = "${item.quantityStr.trim()}${item.unit.trim().take(2)}".trim(),
-                    unit = "",
+                    qty = qtyDisplay,
+                    unit = unitFormatted,
                     rate = rateStr,
                     total = totalStr
                 )

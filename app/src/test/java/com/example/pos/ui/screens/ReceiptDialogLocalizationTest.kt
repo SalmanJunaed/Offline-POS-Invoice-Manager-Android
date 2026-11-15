@@ -45,11 +45,35 @@ class ReceiptDialogLocalizationTest {
 
     @Test
     fun testLocalizeUnit() {
-        assertEquals("লিটার", localizeUnit("L"))
-        assertEquals("লিটার", localizeUnit("ltr"))
+        // 1. Liter / L / Ltr -> লি.
+        assertEquals("লি.", localizeUnit("L"))
+        assertEquals("লি.", localizeUnit("ltr"))
+        assertEquals("লি.", localizeUnit("Liter"))
+        assertEquals("লি.", localizeUnit("লিটার"))
+
+        // 2. Piece / Pcs / Unit / Quantity -> টি
+        assertEquals("টি", localizeUnit("Piece"))
+        assertEquals("টি", localizeUnit("pcs"))
+        assertEquals("টি", localizeUnit("Unit"))
+        assertEquals("টি", localizeUnit("Quantity"))
+        assertEquals("টি", localizeUnit("পিস"))
+
+        // 3. Service -> No unit suffix
+        assertEquals("", localizeUnit("Service"))
+        assertEquals("", localizeUnit("সার্ভিস"))
+        assertEquals("", localizeUnit("Quantity", itemType = "Service"))
+
+        // 4. CNG: CFT -> ঘনফুট, m³ -> ঘনমিটার
+        assertEquals("ঘনফুট", localizeUnit("CFT"))
+        assertEquals("ঘনফুট", localizeUnit("Cubic Foot"))
+        assertEquals("ঘনমিটার", localizeUnit("m³"))
+        assertEquals("ঘনমিটার", localizeUnit("Cubic Metre"))
+
+        // 5. Preserved Bengali units: Kg, Gram, Pack, Box
         assertEquals("কেজি", localizeUnit("kg"))
-        assertEquals("পিস", localizeUnit("pcs"))
         assertEquals("গ্রাম", localizeUnit("gm"))
+        assertEquals("প্যাক", localizeUnit("pack"))
+        assertEquals("বক্স", localizeUnit("box"))
     }
 
     @Test
