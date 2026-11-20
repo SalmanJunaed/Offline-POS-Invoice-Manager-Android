@@ -61,11 +61,12 @@ android {
     }
 }
 
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    compilerOptions {
-        freeCompilerArgs.add("-Xfriend-paths=${project.file("libs/pos-core.jar").absolutePath}")
-    }
-}
+// Disabled stale pos-core.jar so compileDebugKotlin classes are never shadowed by frozen legacy classes
+// tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+//     compilerOptions {
+//         freeCompilerArgs.add("-Xfriend-paths=${project.file("libs/pos-core.jar").absolutePath}")
+//     }
+// }
 
 tasks.withType<Test>().configureEach {
     jvmArgs("-noverify")
@@ -77,7 +78,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
-    implementation(files("libs/pos-core.jar"))
+    // implementation(files("libs/pos-core.jar"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

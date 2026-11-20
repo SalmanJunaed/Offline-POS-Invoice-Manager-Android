@@ -70,6 +70,14 @@ object FinancialCalculationEngine {
         }
     }
 
+    fun isLiquidOrFuelType(itemType: String?): Boolean {
+        val normalized = itemType?.trim()?.lowercase(Locale.US) ?: return false
+        return normalized == "liquid" ||
+            normalized == "fuel" ||
+            normalized == "তরল" ||
+            normalized == "তরল জ্বালানি"
+    }
+
     /**
      * Calculates the line total in Paisa for a given unit price (in Paisa) and fractional quantity.
      * E.g., Rate = 130.00 BDT (13000 Paisa), Qty = 10.5 L -> 1365.00 BDT (136500 Paisa).
@@ -80,6 +88,18 @@ object FinancialCalculationEngine {
         val lineTotalBd = unitPriceBd.multiply(quantity)
             .setScale(0, RoundingMode.HALF_UP)
         return lineTotalBd.longValueExact()
+    }
+
+    /**
+     * Calculates fractional quantity from an authoritative line total (Paisa) and unit price (Paisa).
+     * Uses BigDecimal division with 2 decimal places and RoundingMode.HALF_UP, stripping trailing zeros.
+     * Returns BigDecimal.ZERO safely if totalPaisa <= 0 or unitPricePaisa <= 0 (no division by zero).
+     */
+    fun calculateQuantityFromTotal(totalPaisa: Long, unitPricePaisa: Long): BigDecimal {
+        if (totalPaisa <= 0L || unitPricePaisa <= 0L) return BigDecimal.ZERO
+        val totalBd = BigDecimal.valueOf(totalPaisa)
+        val priceBd = BigDecimal.valueOf(unitPricePaisa)
+        return totalBd.divide(priceBd, 2, RoundingMode.HALF_UP).stripTrailingZeros()
     }
 
     /**

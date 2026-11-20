@@ -25,6 +25,10 @@ sealed class PosError(val message: String, val cause: Throwable? = null) {
     class InvalidCredentials : PosError("Invalid phone number or password.")
     class UserAlreadyExists : PosError("An operator with this phone number already exists.")
     class Unauthenticated : PosError("No active operator session found.")
+    class AccountLocked(val remainingSeconds: Long) :
+        PosError("Too many failed login attempts. Try again in ${remainingSeconds}s.")
+    class InvalidRecoveryCode : PosError("Invalid recovery code.")
+    class RecoveryNotConfigured : PosError("No recovery code is configured for this operator.")
 
     // XLSX Sync & Import/Export Errors
     class SyncConflictError(message: String) : PosError(message)

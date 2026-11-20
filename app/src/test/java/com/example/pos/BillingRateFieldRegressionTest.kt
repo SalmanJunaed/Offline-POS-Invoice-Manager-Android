@@ -1,42 +1,90 @@
 package com.example.pos
 
 import android.app.Application
+import android.os.Looper
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
+import com.example.pos.core.security.InMemoryAesGcmSessionCipher
+import com.example.pos.core.security.SecureSessionManager
 import com.example.pos.data.db.PosDatabase
 import com.example.pos.data.db.ProductEntity
+import com.example.pos.data.repository.PosRepository
 import com.example.pos.domain.FinancialCalculationEngine
 import com.example.pos.ui.viewmodel.PosViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class BillingRateFieldRegressionTest {
 
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
     private lateinit var app: Application
     private lateinit var db: PosDatabase
+    private lateinit var dataStoreScope: CoroutineScope
+    private lateinit var repository: PosRepository
     private lateinit var viewModel: PosViewModel
+    private lateinit var operatorPhone: String
 
     @Before
-    fun setup() {
+    fun setup() = runBlocking {
         app = ApplicationProvider.getApplicationContext<Application>()
         db = PosDatabase.getInstance(app)
-        viewModel = PosViewModel(app)
+        db.awaitInitialized()
+
+        dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val dsFile = tempFolder.newFile("billing_rate_session_${System.nanoTime()}.preferences_pb")
+        val dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { dsFile }
+        val sessionManager = SecureSessionManager.createForTest(
+            dataStore = dataStore,
+            cipher = InMemoryAesGcmSessionCipher()
+        )
+        repository = PosRepository(app, db, sessionManager)
+        operatorPhone = "01788${(100000..999999).random()}"
+        val regRes = repository.registerOperator("Billing Operator", operatorPhone, "Main Branch", "1234")
+        assertTrue("Operator setup must succeed: ${regRes.exceptionOrNull()?.message}", regRes.isSuccess)
+
+        viewModel = PosViewModel.createForTest(app, repository)
+        var attempts = 0
+        while (viewModel.activeOperator.value == null && attempts < 40) {
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            delay(20)
+            attempts++
+        }
+        assertNotNull("Operator session must be active for checkout test", viewModel.activeOperator.value)
     }
 
     @After
-    fun tearDown() {
-        // Clear draft for subsequent tests
-        viewModel.clearDraft()
+    fun tearDown() = runBlocking {
+        if (::viewModel.isInitialized) {
+            viewModel.clearDraft()
+        }
+        if (::repository.isInitialized) {
+            repository.logout()
+        }
+        if (::dataStoreScope.isInitialized) {
+            dataStoreScope.cancel()
+        }
     }
 
     @Test
@@ -127,13 +175,19 @@ class BillingRateFieldRegressionTest {
         val currentOrderId = viewModel.draftOrderId.value
         viewModel.checkoutAndSave(printDirectly = false)
 
-        // Allow coroutine to persist
-        kotlinx.coroutines.delay(200)
+        // Pump Robolectric main looper & allow IO coroutine to persist
+        var saveAttempts = 0
+        while (db.invoiceDao().getInvoiceById(currentOrderId) == null && saveAttempts < 40) {
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            delay(25)
+            saveAttempts++
+        }
 
         val savedInvoice = db.invoiceDao().getInvoiceById(currentOrderId)
         assertNotNull(savedInvoice)
         assertEquals(32500L, savedInvoice?.rawTotalPaisa)
         assertEquals(325L, savedInvoice?.roundedTotalBdt)
+        assertEquals(operatorPhone, db.operatorDao().getOperatorById(savedInvoice!!.operatorId)?.operatorPhone)
 
         val savedLines = db.invoiceDao().getLinesForOrder(currentOrderId)
         assertEquals(1, savedLines.size)

@@ -1,15 +1,23 @@
 package com.example.pos
 
 import android.app.Application
+import android.os.Looper
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
+import com.example.pos.core.security.InMemoryAesGcmSessionCipher
+import com.example.pos.core.security.SecureSessionManager
 import com.example.pos.data.db.AppSettingsEntity
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.PaymentRecordEntity
 import com.example.pos.data.db.PosDatabase
+import com.example.pos.data.repository.PosRepository
 import com.example.pos.ui.viewmodel.PosViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -22,9 +30,12 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -32,9 +43,15 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class Phase3StageADirectPreviewTest {
 
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var app: Application
     private lateinit var db: PosDatabase
+    private lateinit var dataStoreScope: CoroutineScope
+    private lateinit var repository: PosRepository
+    private val createdViewModels = mutableListOf<PosViewModel>()
 
     @Before
     fun setup() {
@@ -43,6 +60,7 @@ class Phase3StageADirectPreviewTest {
         db = PosDatabase.getInstance(app)
 
         runBlocking {
+            db.awaitInitialized()
             db.appSettingsDao().insertOrUpdate(
                 AppSettingsEntity(
                     id = 1,
@@ -54,12 +72,45 @@ class Phase3StageADirectPreviewTest {
                     footerNoteLine1 = "ধন্যবাদ আবার আসবেন"
                 )
             )
+            dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val dsFile = tempFolder.newFile("phase3_preview_session_${System.nanoTime()}.preferences_pb")
+            val dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { dsFile }
+            val sessionManager = SecureSessionManager.createForTest(
+                dataStore = dataStore,
+                cipher = InMemoryAesGcmSessionCipher()
+            )
+            repository = PosRepository(app, db, sessionManager)
+            val phone = "01777${(100000..999999).random()}"
+            val reg = repository.registerOperator("Preview Operator", phone, "Main Branch", "1234")
+            assertTrue(reg.isSuccess)
         }
     }
 
     @After
     fun tearDown() {
+        createdViewModels.forEach { it.cancelScopeForTest() }
+        createdViewModels.clear()
+        if (::repository.isInitialized) {
+            runBlocking { repository.logout() }
+        }
+        if (::dataStoreScope.isInitialized) {
+            dataStoreScope.cancel()
+        }
         Dispatchers.resetMain()
+    }
+
+    private fun createAuthenticatedViewModel(): PosViewModel {
+        val vm = PosViewModel.createForTest(app, repository)
+        createdViewModels.add(vm)
+        var attempts = 0
+        while (vm.activeOperator.value == null && attempts < 40) {
+            testDispatcher.scheduler.advanceUntilIdle()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(20)
+            attempts++
+        }
+        assertNotNull("Authenticated operator must be active", vm.activeOperator.value)
+        return vm
     }
 
     private suspend fun insertSampleInvoice(
@@ -115,7 +166,7 @@ class Phase3StageADirectPreviewTest {
     @Test
     fun testInvoiceDetailsPreviewPrint_opensReceiptPreviewWithAccurateData() = runBlocking {
         val invoice = insertSampleInvoice("INV-DETAILS-01")
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         // Verify initial state
         assertFalse("Receipt preview should initially be closed", vm.receiptPreviewOpen.value)
@@ -152,7 +203,7 @@ class Phase3StageADirectPreviewTest {
             roundedTotalBdt = 500L,
             rawTotalPaisa = 50000L
         )
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         var settledInvoice: InvoiceEntity? = null
         vm.settleInvoiceDue("INV-DUE-FULL-01", 100L) { updated ->
@@ -206,7 +257,7 @@ class Phase3StageADirectPreviewTest {
             roundedTotalBdt = 500L,
             rawTotalPaisa = 50000L
         )
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         assertFalse("Receipt preview should initially be closed", vm.receiptPreviewOpen.value)
 
@@ -232,7 +283,7 @@ class Phase3StageADirectPreviewTest {
             roundedTotalBdt = 500L,
             rawTotalPaisa = 50000L
         )
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         var settledInvoice: InvoiceEntity? = null
         vm.settleInvoiceDue("INV-DUE-PART-01", 150L) { updated ->
@@ -262,7 +313,7 @@ class Phase3StageADirectPreviewTest {
     @Test
     fun testReprintSafety_neverGeneratesDuplicateInvoiceOrPayment() = runBlocking {
         val invoice = insertSampleInvoice("INV-REPRINT-01")
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         vm.openInvoicePreview(invoice)
         var attempts = 0
@@ -304,7 +355,7 @@ class Phase3StageADirectPreviewTest {
             roundedTotalBdt = 500L,
             rawTotalPaisa = 50000L
         )
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         vm.openInvoicePreview(invoice)
         var attempts = 0
@@ -350,7 +401,7 @@ class Phase3StageADirectPreviewTest {
     @Test
     fun testDeleteFromPreview_atomicallyDeletesOrderLinesAndPayments() = runBlocking {
         val invoice = insertSampleInvoice("INV-DELETE-01")
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         vm.openInvoicePreview(invoice)
         var attempts = 0
@@ -390,7 +441,7 @@ class Phase3StageADirectPreviewTest {
     @Test
     fun testClosePreview_restoresCleanNavigationState() = runBlocking {
         val invoice = insertSampleInvoice("INV-CLOSE-01")
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         vm.openInvoicePreview(invoice)
         var attempts = 0
@@ -418,7 +469,7 @@ class Phase3StageADirectPreviewTest {
             roundedTotalBdt = 500L,
             rawTotalPaisa = 50000L
         )
-        val vm = PosViewModel(app)
+        val vm = createAuthenticatedViewModel()
 
         // 1. Normal preview from History does NOT set closeDetailsOnPrintSuccess
         vm.openInvoicePreview(invoice)

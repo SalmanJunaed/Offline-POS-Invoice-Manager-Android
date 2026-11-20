@@ -338,7 +338,7 @@ class PosDatabaseTest {
         val v1Db = helper.writableDatabase
         v1Db.close()
 
-        // Now open with Room and apply MIGRATION_1_2 through MIGRATION_6_7
+        // Now open with Room and apply MIGRATION_1_2 through MIGRATION_8_9
         val migratedDb = Room.databaseBuilder(context, PosDatabase::class.java, "migration_test.db")
             .addMigrations(
                 PosDatabase.MIGRATION_1_2,
@@ -346,7 +346,9 @@ class PosDatabaseTest {
                 PosDatabase.MIGRATION_3_4,
                 PosDatabase.MIGRATION_4_5,
                 PosDatabase.MIGRATION_5_6,
-                PosDatabase.MIGRATION_6_7
+                PosDatabase.MIGRATION_6_7,
+                PosDatabase.MIGRATION_7_8,
+                PosDatabase.MIGRATION_8_9
             )
             .allowMainThreadQueries()
             .build()

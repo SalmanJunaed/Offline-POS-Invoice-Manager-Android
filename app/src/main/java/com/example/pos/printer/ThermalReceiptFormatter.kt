@@ -316,21 +316,30 @@ object ThermalReceiptFormatter {
             val currencySuffix = if (isBn) "৳" else "BDT"
             val qtyUnit = if (unitFormatted.isNotBlank()) "$qtyVal $unitFormatted".trim() else qtyVal
 
-            if (!isBn && getVisualWidth(name) <= 12) {
-                val enQtyUnit = "${item.quantityStr}${item.unit.take(2)}".trim()
+            val enQtyUnit = "${item.quantityStr}${item.unit.take(2)}".trim()
+            if (!isBn && getVisualWidth(name) <= 12 &&
+                getVisualWidth(enQtyUnit) <= 4 &&
+                getVisualWidth(rate) <= 6 &&
+                getVisualWidth(total) <= 7
+            ) {
                 sb.appendLine(
                     padRightVisual(name, 12) + " " +
-                            padLeftVisual(enQtyUnit.take(4), 4) + " " +
-                            padLeftVisual(rate.take(6), 6) + " " +
-                            padLeftVisual(total.take(7), 7)
+                            padLeftVisual(enQtyUnit, 4) + " " +
+                            padLeftVisual(rate, 6) + " " +
+                            padLeftVisual(total, 7)
                 )
             } else {
-                // Item name on line 1 (wrapped), details indented on line 2
+                // Item name on line 1 (wrapped), details indented on line 2 (never truncates decimals/units)
                 val wrappedName = wrapText(name, width)
                 wrappedName.forEach { sb.appendLine(it) }
                 val detailLeft = "  $qtyUnit x $rate"
                 val detailRight = "$total $currencySuffix"
-                sb.appendLine(padRow(detailLeft, detailRight, width))
+                if (getVisualWidth(detailLeft) + 1 + getVisualWidth(detailRight) <= width) {
+                    sb.appendLine(padRow(detailLeft, detailRight, width))
+                } else {
+                    wrapLinesForWidth(detailLeft, width).forEach { sb.appendLine(it) }
+                    sb.appendLine(padLeftVisual(detailRight, width))
+                }
             }
         }
 
@@ -548,7 +557,23 @@ object ThermalReceiptFormatter {
                 FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa)
             }
 
-            if (getVisualWidth(name) <= 18) {
+            val fitsColumns = getVisualWidth(qty) <= 5 &&
+                    getVisualWidth(unit) <= 5 &&
+                    getVisualWidth(rate) <= 8 &&
+                    getVisualWidth(total) <= 8
+
+            if (!fitsColumns) {
+                // 2-line fallback when fractional qty, unit, rate, or total exceeds 80mm column widths
+                wrapText(name, width).forEach { sb.appendLine(it) }
+                val unitPart = if (unit.isNotBlank()) " $unit" else ""
+                val detailLeft = "  $qty$unitPart x $rate"
+                if (getVisualWidth(detailLeft) + 1 + getVisualWidth(total) <= width) {
+                    sb.appendLine(padRow(detailLeft, total, width))
+                } else {
+                    wrapLinesForWidth(detailLeft, width).forEach { sb.appendLine(it) }
+                    sb.appendLine(padLeftVisual(total, width))
+                }
+            } else if (getVisualWidth(name) <= 18) {
                 sb.appendLine(
                     padRightVisual(name, 18) + " " +
                             padLeftVisual(qty, 5) + " " +
@@ -1270,6 +1295,24 @@ object ThermalReceiptFormatter {
     private fun format80mmNativeItemLine(name: String, qty: String, unit: String, rate: String, total: String): String {
         val sb = StringBuilder()
         val displayUnit = if (!containsBangla(unit) && unit.length > 5) unit.take(5) else unit
+        val fitsColumns = getVisualWidth(qty) <= 5 &&
+                getVisualWidth(displayUnit) <= 5 &&
+                getVisualWidth(rate) <= 8 &&
+                getVisualWidth(total) <= 8
+
+        if (!fitsColumns) {
+            wrapText(name, WIDTH_80MM).forEach { sb.append("$it\n") }
+            val unitPart = if (displayUnit.isNotBlank()) " $displayUnit" else ""
+            val detailLeft = "  $qty$unitPart x $rate"
+            if (getVisualWidth(detailLeft) + 1 + getVisualWidth(total) <= WIDTH_80MM) {
+                sb.append("${padRow(detailLeft, total, WIDTH_80MM)}\n")
+            } else {
+                wrapLinesForWidth(detailLeft, WIDTH_80MM).forEach { sb.append("$it\n") }
+                sb.append("${padLeftVisual(total, WIDTH_80MM)}\n")
+            }
+            return sb.toString()
+        }
+
         val nameLines = if (getVisualWidth(name) <= 18) listOf(name) else wrapText(name, 18)
         sb.append(
             padRightVisual(nameLines.firstOrNull() ?: name, 18) + " " +
@@ -1287,7 +1330,7 @@ object ThermalReceiptFormatter {
     private fun format58mmNativeItemLine(name: String, qty: String, unit: String, rate: String, total: String, width: Int, isBn: Boolean = false): String {
         val sb = StringBuilder()
         val isBnLine = isBn || containsBangla(total) || containsBangla(name) || containsBangla(unit) || containsBangla(rate) || containsBangla(qty)
-        if (!isBnLine && getVisualWidth(name) <= 12 && qty.length <= 4 && unit.isBlank() && rate.length <= 6 && total.length <= 7) {
+        if (!isBnLine && getVisualWidth(name) <= 12 && getVisualWidth(qty) <= 4 && unit.isBlank() && getVisualWidth(rate) <= 6 && getVisualWidth(total) <= 7) {
             sb.append(
                 padRightVisual(name, 12) + " " +
                     padLeftVisual(qty, 4) + " " +
@@ -1300,7 +1343,13 @@ object ThermalReceiptFormatter {
             val unitStr = if (unit.isNotBlank()) " $unit" else ""
             val detailLeft = "  ${qty}${unitStr} x ${rate}"
             val totalCurrency = if (isBnLine) "৳" else "BDT"
-            sb.append("${padRow(detailLeft, "$total $totalCurrency", width)}\n")
+            val detailRight = "$total $totalCurrency"
+            if (getVisualWidth(detailLeft) + 1 + getVisualWidth(detailRight) <= width) {
+                sb.append("${padRow(detailLeft, detailRight, width)}\n")
+            } else {
+                wrapLinesForWidth(detailLeft, width).forEach { sb.append("$it\n") }
+                sb.append("${padLeftVisual(detailRight, width)}\n")
+            }
         }
         return sb.toString()
     }

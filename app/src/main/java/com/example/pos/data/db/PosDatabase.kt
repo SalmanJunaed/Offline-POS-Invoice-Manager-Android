@@ -5,10 +5,11 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.security.MessageDigest
+import kotlinx.coroutines.withContext
 
 @Database(
     entities = [
@@ -19,9 +20,10 @@ import java.security.MessageDigest
         InvoiceLineEntity::class,
         AppSettingsEntity::class,
         PaymentRecordEntity::class,
-        CustomerEntity::class
+        CustomerEntity::class,
+        AuditLogEntity::class
     ],
-    version = 7,
+    version = 9,
     exportSchema = false
 )
 abstract class PosDatabase : RoomDatabase() {
@@ -32,6 +34,21 @@ abstract class PosDatabase : RoomDatabase() {
     abstract fun appSettingsDao(): AppSettingsDao
     abstract fun paymentDao(): PaymentDao
     abstract fun customerDao(): CustomerDao
+    abstract fun auditLogDao(): AuditLogDao
+
+    @Volatile
+    private var initLatch: CompletableDeferred<Unit> = CompletableDeferred(Unit)
+
+    /**
+     * Ensures Room database creation and first-install prepopulation have completed
+     * before authentication or initial POS queries inspect the database.
+     */
+    suspend fun awaitInitialized() {
+        withContext(Dispatchers.IO) {
+            openHelper.writableDatabase
+        }
+        initLatch.await()
+    }
 
     companion object {
         @Volatile
@@ -167,37 +184,137 @@ abstract class PosDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE operators ADD COLUMN recovery_code_hash TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE operators ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE operators ADD COLUMN locked_until_millis INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 1. Create append-only audit_logs table (no FK to operators so audit trail survives)
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        event_id TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        operator_id TEXT NOT NULL,
+                        operator_name TEXT NOT NULL,
+                        action_type TEXT NOT NULL,
+                        entity_type TEXT NOT NULL,
+                        entity_id TEXT NOT NULL,
+                        summary_en TEXT NOT NULL,
+                        summary_bn TEXT NOT NULL,
+                        before_data TEXT,
+                        after_data TEXT,
+                        is_success INTEGER NOT NULL,
+                        metadata_json TEXT
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_audit_logs_event_id ON audit_logs(event_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_audit_logs_timestamp ON audit_logs(timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_audit_logs_operator_id_timestamp ON audit_logs(operator_id, timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_audit_logs_action_type_timestamp ON audit_logs(action_type, timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_audit_logs_entity_type_entity_id ON audit_logs(entity_type, entity_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_audit_logs_is_success_timestamp ON audit_logs(is_success, timestamp)")
+
+                // 2. Add nullable employee attribution columns to business tables (never backfill fake operators)
+                db.execSQL("ALTER TABLE invoices ADD COLUMN updated_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE invoices ADD COLUMN updated_by_operator_name TEXT")
+
+                db.execSQL("ALTER TABLE payment_records ADD COLUMN collected_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE payment_records ADD COLUMN collected_by_operator_name TEXT")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_payment_records_collected_by_operator_id ON payment_records(collected_by_operator_id)")
+
+                db.execSQL("ALTER TABLE products ADD COLUMN created_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN created_by_operator_name TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN updated_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE products ADD COLUMN updated_by_operator_name TEXT")
+
+                db.execSQL("ALTER TABLE customers ADD COLUMN created_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE customers ADD COLUMN created_by_operator_name TEXT")
+                db.execSQL("ALTER TABLE customers ADD COLUMN updated_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE customers ADD COLUMN updated_by_operator_name TEXT")
+
+                db.execSQL("ALTER TABLE company_header ADD COLUMN updated_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE company_header ADD COLUMN updated_by_operator_name TEXT")
+
+                db.execSQL("ALTER TABLE app_settings ADD COLUMN updated_by_operator_id TEXT")
+                db.execSQL("ALTER TABLE app_settings ADD COLUMN updated_by_operator_name TEXT")
+            }
+        }
+
         fun hashPassword(password: String): String {
             return com.example.pos.core.security.PasswordSecurity.hashPassword(password)
         }
 
         fun getInstance(context: Context): PosDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    PosDatabase::class.java,
-                    "pos_invoice_master.db"
-                )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
-                    .fallbackToDestructiveMigrationOnDowngrade(true)
-                    .addCallback(object : Callback() {
-                        override fun onCreate(db: SupportSQLiteDatabase) {
-                            super.onCreate(db)
-                            // Populate default business records in background
-                            CoroutineScope(Dispatchers.IO).launch {
-                                prepopulateDatabase(getInstance(context))
-                            }
-                        }
-                    })
-                    .build()
+                INSTANCE?.let { return@synchronized it }
+                val instance = buildDatabase(context.applicationContext, "pos_invoice_master.db")
                 INSTANCE = instance
                 instance
             }
         }
 
+        @androidx.annotation.VisibleForTesting
+        internal fun createFreshForTest(context: Context, dbName: String): PosDatabase {
+            return buildDatabase(context.applicationContext, dbName)
+        }
+
+        private fun buildDatabase(appContext: Context, dbName: String): PosDatabase {
+            val latch = CompletableDeferred<Unit>()
+            var createdInThisOpen = false
+            lateinit var holder: PosDatabase
+            val instance = Room.databaseBuilder(
+                appContext,
+                PosDatabase::class.java,
+                dbName
+            )
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9
+                )
+                .fallbackToDestructiveMigrationOnDowngrade(true)
+                .addCallback(object : Callback() {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        super.onCreate(db)
+                        createdInThisOpen = true
+                        // Populate default business records in background and release latch on finish
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                prepopulateDatabase(holder)
+                            } finally {
+                                latch.complete(Unit)
+                            }
+                        }
+                    }
+
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        if (!createdInThisOpen) {
+                            latch.complete(Unit)
+                        }
+                    }
+                })
+                .build()
+            holder = instance
+            instance.initLatch = latch
+            return instance
+        }
+
         private suspend fun prepopulateDatabase(database: PosDatabase) {
             val companyDao = database.companyHeaderDao()
-            val operatorDao = database.operatorDao()
             val productDao = database.productDao()
             val invoiceDao = database.invoiceDao()
             val settingsDao = database.appSettingsDao()
@@ -217,22 +334,10 @@ abstract class PosDatabase : RoomDatabase() {
                 )
             )
 
-            // 2. Operator Profile Model
-            operatorDao.insertOperator(
-                OperatorEntity(
-                    userId = "OP-101",
-                    operatorName = "Salman Junaed",
-                    operatorPhone = "01700000000",
-                    operatorAddress = "মহাদেবপুর, নওগাঁ",
-                    passwordHash = hashPassword("1234"),
-                    isActive = true,
-                    rememberMe = true,
-                    createdAt = System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis()
-                )
-            )
+            // Fresh installation intentionally starts with ZERO registered operators
+            // so the user must register a real operator account on first launch.
 
-            // 3. Product / Service Catalog (with Bangla and English names from PRD)
+            // 2. Product / Service Catalog (with Bangla and English names from PRD)
             val initialProducts = listOf(
                 ProductEntity(
                     itemId = "item-1",

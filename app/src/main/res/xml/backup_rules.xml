@@ -1,2 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<full-backup-content/>
+<full-backup-content>
+    <!-- Preserve Room POS business database & logos while excluding device-bound encrypted session files -->
+    <exclude domain="file" path="datastore/pos_secure_session.preferences_pb" />
+    <exclude domain="sharedpref" path="secure_pos_session_storage.xml" />
+</full-backup-content>

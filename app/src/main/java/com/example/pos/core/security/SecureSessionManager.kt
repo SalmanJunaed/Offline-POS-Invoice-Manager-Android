@@ -1,169 +1,254 @@
 package com.example.pos.core.security
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.util.Base64
-import java.security.KeyStore
+import androidx.annotation.VisibleForTesting
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.first
+import org.json.JSONObject
 import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
+
+private val Context.posSessionDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = SecureSessionManager.DATASTORE_NAME
+)
+
+data class SessionPayload(
+    val userId: String,
+    val sessionNonce: String,
+    val rememberMe: Boolean,
+    val createdAtMillis: Long,
+    val expiresAtMillis: Long,
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION
+) {
+    companion object {
+        const val CURRENT_SCHEMA_VERSION = 2
+    }
+}
 
 /**
- * Android Secure Local Storage for session-related secrets and credentials.
- * Implements hardware-backed AES-256-GCM encryption with AndroidKeyStore,
- * ensuring all session tokens, remember-me flags, and operator identity secrets
- * are encrypted at rest without relying on external cloud services.
+ * Authenticated, encrypted local session manager built on Jetpack DataStore Preferences
+ * and AndroidKeyStore AES-256-GCM encryption.
+ *
+ * Security guarantees:
+ * - Entire session payload (userId, nonce, rememberMe, timestamps, metadata) is encrypted.
+ * - Unique 12-byte IV per write with 128-bit GCM authentication tag.
+ * - Never falls back to plaintext or unauthenticated Base64 encoding.
+ * - Fails closed (returns null / rejects restore) on decryption, tampering, expiry, or Keystore errors.
  */
-class SecureSessionManager private constructor(context: Context) {
+class SecureSessionManager internal constructor(
+    private val dataStore: DataStore<Preferences>,
+    private val cipher: SessionCipher,
+    private val appContext: Context? = null,
+    private val timeProvider: () -> Long = { System.currentTimeMillis() }
+) {
 
     companion object {
-        private const val PREFS_NAME = "secure_pos_session_storage"
-        private const val KEY_ALIAS = "PosSessionMasterKey"
-        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val GCM_TAG_LENGTH = 128
-        private const val IV_LENGTH_BYTES = 12
+        const val DATASTORE_NAME = "pos_secure_session"
+        private const val LEGACY_PREFS_NAME = "secure_pos_session_storage"
 
-        // Session keys
-        private const val KEY_REMEMBER_ME = "pref_remember_me_enabled"
-        private const val KEY_SAVED_PHONE = "pref_saved_operator_phone"
-        private const val KEY_ACTIVE_USER_ID = "pref_active_operator_id"
-        private const val KEY_LAST_LOGIN_TIMESTAMP = "pref_last_login_timestamp"
-        private const val KEY_SESSION_TOKEN = "pref_encrypted_session_token"
+        private val KEY_ENCRYPTED_SESSION = stringPreferencesKey("encrypted_session_payload")
+        private val KEY_ENCRYPTED_REMEMBERED_HINT = stringPreferencesKey("encrypted_remembered_hint")
+
+        const val REMEMBERED_SESSION_TTL_MS = 30L * 24L * 60L * 60L * 1000L // 30 days
+        const val EPHEMERAL_SESSION_TTL_MS = 24L * 60L * 60L * 1000L       // 24 hours
 
         @Volatile
         private var INSTANCE: SecureSessionManager? = null
 
         fun getInstance(context: Context): SecureSessionManager {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: SecureSessionManager(context.applicationContext).also { INSTANCE = it }
+                INSTANCE ?: SecureSessionManager(
+                    dataStore = context.applicationContext.posSessionDataStore,
+                    cipher = AndroidKeyStoreSessionCipher(),
+                    appContext = context.applicationContext
+                ).also { INSTANCE = it }
             }
+        }
+
+        @VisibleForTesting
+        fun createForTest(
+            dataStore: DataStore<Preferences>,
+            cipher: SessionCipher = InMemoryAesGcmSessionCipher(),
+            timeProvider: () -> Long = { System.currentTimeMillis() }
+        ): SecureSessionManager {
+            return SecureSessionManager(
+                dataStore = dataStore,
+                cipher = cipher,
+                appContext = null,
+                timeProvider = timeProvider
+            )
         }
     }
 
-    private val appContext = context.applicationContext
-    private val prefs: SharedPreferences = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val secureRandom = SecureRandom()
 
-    init {
-        ensureKeyGenerated()
+    suspend fun saveLoginSession(
+        userId: String,
+        phone: String,
+        rememberMe: Boolean
+    ): Result<SessionPayload> {
+        if (userId.isBlank()) {
+            return Result.failure(IllegalArgumentException("User ID must not be blank."))
+        }
+        val now = timeProvider()
+        val ttl = if (rememberMe) REMEMBERED_SESSION_TTL_MS else EPHEMERAL_SESSION_TTL_MS
+        val nonceBytes = ByteArray(32).also { secureRandom.nextBytes(it) }
+        val payload = SessionPayload(
+            userId = userId,
+            sessionNonce = Base64.encodeToString(nonceBytes, Base64.NO_WRAP),
+            rememberMe = rememberMe,
+            createdAtMillis = now,
+            expiresAtMillis = now + ttl,
+            schemaVersion = SessionPayload.CURRENT_SCHEMA_VERSION
+        )
+
+        val encryptedSessionResult = cipher.encrypt(serializeSession(payload))
+        if (encryptedSessionResult.isFailure) {
+            return Result.failure(
+                encryptedSessionResult.exceptionOrNull()
+                    ?: IllegalStateException("Unable to encrypt session payload.")
+            )
+        }
+        val encryptedSession = encryptedSessionResult.getOrThrow()
+
+        val encryptedHint: String? = if (rememberMe && phone.isNotBlank()) {
+            val hintJson = JSONObject().apply {
+                put("phone", phone.trim())
+                put("rememberMe", true)
+                put("updatedAt", now)
+            }.toString()
+            cipher.encrypt(hintJson).getOrNull()
+        } else {
+            null
+        }
+
+        dataStore.edit { prefs ->
+            prefs[KEY_ENCRYPTED_SESSION] = encryptedSession
+            if (encryptedHint != null) {
+                prefs[KEY_ENCRYPTED_REMEMBERED_HINT] = encryptedHint
+            } else if (!rememberMe) {
+                prefs.remove(KEY_ENCRYPTED_REMEMBERED_HINT)
+            }
+        }
+        purgeLegacySharedPrefs()
+        return Result.success(payload)
     }
 
-    private fun ensureKeyGenerated() {
+    /**
+     * Reads and authenticates the stored encrypted session.
+     * Returns null if missing, undecryptable, tampered, schema-invalid, or expired.
+     */
+    suspend fun readValidSession(): SessionPayload? {
+        val encoded = try {
+            dataStore.data.first()[KEY_ENCRYPTED_SESSION]
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        val plainJson = cipher.decrypt(encoded) ?: return null
+        val payload = deserializeSession(plainJson) ?: return null
+
+        val now = timeProvider()
+        if (payload.userId.isBlank() ||
+            payload.sessionNonce.isBlank() ||
+            payload.createdAtMillis <= 0L ||
+            payload.createdAtMillis > now + 60_000L || // reject invalid future creation
+            now > payload.expiresAtMillis
+        ) {
+            return null
+        }
+
+        return payload
+    }
+
+    suspend fun getSavedPhoneHint(): String {
+        val encoded = try {
+            dataStore.data.first()[KEY_ENCRYPTED_REMEMBERED_HINT]
+        } catch (_: Exception) {
+            null
+        } ?: return ""
+
+        val plain = cipher.decrypt(encoded) ?: return ""
+        return try {
+            val obj = JSONObject(plain)
+            if (obj.optBoolean("rememberMe", false)) {
+                obj.optString("phone", "")
+            } else {
+                ""
+            }
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    suspend fun isRememberMeHintEnabled(): Boolean {
+        val encoded = try {
+            dataStore.data.first()[KEY_ENCRYPTED_REMEMBERED_HINT]
+        } catch (_: Exception) {
+            null
+        } ?: return false
+
+        val plain = cipher.decrypt(encoded) ?: return false
+        return try {
+            JSONObject(plain).optBoolean("rememberMe", false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun clearSession(clearRememberedHint: Boolean = false) {
+        dataStore.edit { prefs ->
+            prefs.remove(KEY_ENCRYPTED_SESSION)
+            if (clearRememberedHint) {
+                prefs.remove(KEY_ENCRYPTED_REMEMBERED_HINT)
+            }
+        }
+        purgeLegacySharedPrefs()
+    }
+
+    private fun purgeLegacySharedPrefs() {
         try {
-            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            if (!keyStore.containsAlias(KEY_ALIAS)) {
-                val keyGenerator = KeyGenerator.getInstance("AES", ANDROID_KEYSTORE)
-                val keyGenParameterSpec = android.security.keystore.KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
-                    android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
-                )
-                    .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(256)
-                    .build()
-                keyGenerator.init(keyGenParameterSpec)
-                keyGenerator.generateKey()
-            }
-        } catch (e: Exception) {
-            // Log or fallback handled gracefully in encrypt/decrypt (e.g. Robolectric / unit tests)
+            appContext?.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.clear()
+                ?.apply()
+        } catch (_: Exception) {
         }
     }
 
-    private fun getSecretKey(): SecretKey? {
+    private fun serializeSession(payload: SessionPayload): String {
+        return JSONObject().apply {
+            put("v", payload.schemaVersion)
+            put("uid", payload.userId)
+            put("nonce", payload.sessionNonce)
+            put("rem", payload.rememberMe)
+            put("iat", payload.createdAtMillis)
+            put("exp", payload.expiresAtMillis)
+        }.toString()
+    }
+
+    private fun deserializeSession(jsonStr: String): SessionPayload? {
         return try {
-            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            val entry = keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-            entry?.secretKey
-        } catch (e: Exception) {
+            val obj = JSONObject(jsonStr)
+            val version = obj.optInt("v", 0)
+            if (version != SessionPayload.CURRENT_SCHEMA_VERSION) return null
+            val userId = obj.optString("uid", "")
+            val nonce = obj.optString("nonce", "")
+            if (!obj.has("rem") || !obj.has("iat") || !obj.has("exp")) return null
+            SessionPayload(
+                userId = userId,
+                sessionNonce = nonce,
+                rememberMe = obj.getBoolean("rem"),
+                createdAtMillis = obj.getLong("iat"),
+                expiresAtMillis = obj.getLong("exp"),
+                schemaVersion = version
+            )
+        } catch (_: Exception) {
             null
         }
-    }
-
-    private fun encrypt(plainText: String): String {
-        return try {
-            val secretKey = getSecretKey()
-            if (secretKey != null) {
-                val cipher = Cipher.getInstance(TRANSFORMATION)
-                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-                val iv = cipher.iv
-                val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-                val combined = ByteArray(iv.size + cipherText.size)
-                System.arraycopy(iv, 0, combined, 0, iv.size)
-                System.arraycopy(cipherText, 0, combined, iv.size, cipherText.size)
-                Base64.encodeToString(combined, Base64.NO_WRAP)
-            } else {
-                // Obfuscated fallback for test environments without AndroidKeyStore
-                Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-            }
-        } catch (e: Exception) {
-            Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        }
-    }
-
-    private fun decrypt(encryptedBase64: String): String? {
-        return try {
-            val combined = Base64.decode(encryptedBase64, Base64.NO_WRAP)
-            val secretKey = getSecretKey()
-            if (secretKey != null && combined.size > IV_LENGTH_BYTES) {
-                val iv = ByteArray(IV_LENGTH_BYTES)
-                System.arraycopy(combined, 0, iv, 0, IV_LENGTH_BYTES)
-                val cipherText = ByteArray(combined.size - IV_LENGTH_BYTES)
-                System.arraycopy(combined, IV_LENGTH_BYTES, cipherText, 0, cipherText.size)
-
-                val cipher = Cipher.getInstance(TRANSFORMATION)
-                val spec = GCMParameterSpec(GCM_TAG_LENGTH, iv)
-                cipher.init(Cipher.DECRYPT_MODE, secretKey, spec)
-                val plainTextBytes = cipher.doFinal(cipherText)
-                String(plainTextBytes, Charsets.UTF_8)
-            } else {
-                String(combined, Charsets.UTF_8)
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    // Public Session Storage APIs
-
-    fun saveLoginSession(userId: String, phone: String, rememberMe: Boolean) {
-        val editor = prefs.edit()
-        editor.putBoolean(KEY_REMEMBER_ME, rememberMe)
-        editor.putString(KEY_SAVED_PHONE, phone.trim())
-        editor.putString(KEY_ACTIVE_USER_ID, userId)
-        editor.putLong(KEY_LAST_LOGIN_TIMESTAMP, System.currentTimeMillis())
-
-        val token = "SEC_TOKEN_${userId}_${System.currentTimeMillis()}"
-        editor.putString(KEY_SESSION_TOKEN, encrypt(token))
-        editor.apply()
-    }
-
-    fun isRememberMeEnabled(): Boolean {
-        return prefs.getBoolean(KEY_REMEMBER_ME, false)
-    }
-
-    fun getSavedPhone(): String {
-        return prefs.getString(KEY_SAVED_PHONE, "") ?: ""
-    }
-
-    fun getActiveUserId(): String? {
-        return prefs.getString(KEY_ACTIVE_USER_ID, null)
-    }
-
-    fun getLastLoginTimestamp(): Long {
-        return prefs.getLong(KEY_LAST_LOGIN_TIMESTAMP, 0L)
-    }
-
-    fun clearSession(clearRememberedPhone: Boolean = false) {
-        val editor = prefs.edit()
-        editor.remove(KEY_ACTIVE_USER_ID)
-        editor.remove(KEY_SESSION_TOKEN)
-        editor.remove(KEY_LAST_LOGIN_TIMESTAMP)
-        if (clearRememberedPhone) {
-            editor.remove(KEY_REMEMBER_ME)
-            editor.remove(KEY_SAVED_PHONE)
-        }
-        editor.apply()
     }
 }

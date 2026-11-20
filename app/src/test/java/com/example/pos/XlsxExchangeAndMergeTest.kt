@@ -1,8 +1,11 @@
 package com.example.pos
 
 import android.content.Context
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.example.pos.core.security.InMemoryAesGcmSessionCipher
+import com.example.pos.core.security.SecureSessionManager
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.PosDatabase
@@ -10,6 +13,10 @@ import com.example.pos.data.repository.PosRepository
 import com.example.pos.excel.ExcelExchangeEngine
 import com.example.pos.excel.ParseXlsxResult
 import com.example.pos.excel.ParsedTransaction
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -18,7 +25,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -28,22 +37,38 @@ import java.io.ByteArrayInputStream
 @Config(sdk = [36])
 class XlsxExchangeAndMergeTest {
 
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
     private lateinit var db: PosDatabase
     private lateinit var repository: PosRepository
     private lateinit var context: Context
+    private lateinit var dataStoreScope: CoroutineScope
 
     @Before
-    fun setUp() {
+    fun setUp() = runBlocking {
         context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, PosDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        repository = PosRepository(context, db)
+        dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val dsFile = tempFolder.newFile("xlsx_test_session_${System.nanoTime()}.preferences_pb")
+        val dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { dsFile }
+        val sessionManager = SecureSessionManager.createForTest(
+            dataStore = dataStore,
+            cipher = InMemoryAesGcmSessionCipher()
+        )
+        repository = PosRepository(context, db, sessionManager)
+        val regRes = repository.registerOperator("XLSX Operator", "01711223399", "Main", "1234")
+        assertTrue(regRes.isSuccess)
     }
 
     @After
     fun tearDown() {
         db.close()
+        if (::dataStoreScope.isInitialized) {
+            dataStoreScope.cancel()
+        }
     }
 
     @Test

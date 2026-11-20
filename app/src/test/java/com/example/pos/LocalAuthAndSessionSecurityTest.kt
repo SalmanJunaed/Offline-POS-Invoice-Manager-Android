@@ -1,13 +1,20 @@
 package com.example.pos
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.example.pos.core.security.InMemoryAesGcmSessionCipher
 import com.example.pos.core.security.PasswordSecurity
 import com.example.pos.core.security.SecureSessionManager
-import com.example.pos.data.db.OperatorEntity
 import com.example.pos.data.db.PosDatabase
 import com.example.pos.data.repository.PosRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -16,7 +23,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -25,26 +34,38 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class LocalAuthAndSessionSecurityTest {
 
+    @get:Rule
+    val tempFolder = TemporaryFolder()
+
     private lateinit var db: PosDatabase
     private lateinit var context: Context
-    private lateinit var repository: PosRepository
+    private lateinit var dataStoreScope: CoroutineScope
+    private lateinit var dataStore: DataStore<Preferences>
     private lateinit var sessionManager: SecureSessionManager
+    private lateinit var repository: PosRepository
 
     @Before
-    fun setup() {
+    fun setup() = runBlocking {
         context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, PosDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        repository = PosRepository(context, db)
-        sessionManager = SecureSessionManager.getInstance(context)
-        sessionManager.clearSession(clearRememberedPhone = true)
+        dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val dsFile = tempFolder.newFile("local_auth_test_session.preferences_pb")
+        dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { dsFile }
+        sessionManager = SecureSessionManager.createForTest(
+            dataStore = dataStore,
+            cipher = InMemoryAesGcmSessionCipher()
+        )
+        sessionManager.clearSession(clearRememberedHint = true)
+        repository = PosRepository(context, db, sessionManager)
     }
 
     @After
-    fun teardown() {
+    fun teardown() = runBlocking {
+        sessionManager.clearSession(clearRememberedHint = true)
         db.close()
-        sessionManager.clearSession(clearRememberedPhone = true)
+        dataStoreScope.cancel()
     }
 
     @Test
@@ -53,11 +74,15 @@ class LocalAuthAndSessionSecurityTest {
         val hash = PasswordSecurity.hashPassword(rawPassword)
 
         assertFalse("Password should never be stored as plain text", hash == rawPassword)
-        assertTrue("Hash should be non-blank", hash.isNotBlank())
-        assertTrue("Password verification should succeed with correct credentials",
-            PasswordSecurity.verifyPassword(rawPassword, hash))
-        assertFalse("Password verification should fail with wrong credentials",
-            PasswordSecurity.verifyPassword("WrongPassword", hash))
+        assertTrue("Hash should use PBKDF2 v2 format", hash.startsWith("pbkdf2_sha256\$v2\$"))
+        assertTrue(
+            "Password verification should succeed with correct credentials",
+            PasswordSecurity.verifyPassword(rawPassword, hash)
+        )
+        assertFalse(
+            "Password verification should fail with wrong credentials",
+            PasswordSecurity.verifyPassword("WrongPassword", hash)
+        )
     }
 
     @Test
@@ -67,12 +92,13 @@ class LocalAuthAndSessionSecurityTest {
         val address = "মহাদেবপুর, নওগাঁ"
         val password = "SuperSecretPin99"
 
-        val regResult = repository.registerOperator(name, phone, address, password)
+        val regResult = repository.registerOperatorWithRecovery(name, phone, address, password)
         assertTrue("Registration must succeed", regResult.isSuccess)
 
-        val operator = regResult.getOrNull()
-        assertNotNull(operator)
-        assertEquals(name, operator!!.operatorName)
+        val registration = regResult.getOrNull()!!
+        val operator = registration.operator
+        assertTrue("Recovery code must be generated", registration.recoveryCode.isNotBlank())
+        assertEquals(name, operator.operatorName)
         assertEquals(phone, operator.operatorPhone)
         assertEquals(address, operator.operatorAddress)
         assertFalse("Stored password must not be plain text", operator.passwordHash == password)
@@ -120,12 +146,17 @@ class LocalAuthAndSessionSecurityTest {
         val originalPass = "oldPass123"
         val newPass = "newPass456"
 
-        val regResult = repository.registerOperator("Test User", phone, "Naogaon", originalPass)
+        val regResult = repository.registerOperatorWithRecovery("Test User", phone, "Naogaon", originalPass)
         assertTrue(regResult.isSuccess)
+        val recoveryCode = regResult.getOrNull()!!.recoveryCode
 
-        // Reset password
-        val resetResult = repository.resetPassword(phone, newPass)
-        assertTrue("Password reset should succeed offline", resetResult.isSuccess)
+        // Wrong recovery code must fail
+        val badResetResult = repository.resetPassword(phone, "WRONG-CODE-0000", newPass)
+        assertTrue("Password reset with invalid recovery code must fail", badResetResult.isFailure)
+
+        // Valid recovery code resets password
+        val resetResult = repository.resetPassword(phone, recoveryCode, newPass)
+        assertTrue("Password reset should succeed offline with valid recovery code", resetResult.isSuccess)
 
         // Old password must fail
         val oldLoginResult = repository.login(phone, originalPass, false)
@@ -146,6 +177,7 @@ class LocalAuthAndSessionSecurityTest {
         // Test logout
         repository.logout()
         assertNull("After logout, active operator must be null", repository.getActiveOperator())
+        assertNull("Session cannot be restored after explicit logout", repository.checkAndRestoreSession())
 
         // Login with rememberMe = true
         val loginResult = repository.login(phone, pass, rememberMe = true)

@@ -577,6 +577,130 @@ class ThermalPrinterLayoutTest {
         assertTrue(escPos80.isNotEmpty())
     }
 
+    @Test
+    fun testFractionalLiquidQuantityFormatting_58mmAnd80mm_EnAndBn() {
+        val header = createSampleHeader()
+        val inv = InvoiceEntity(
+            orderId = "FUEL-769",
+            dateTime = 1711188000000L,
+            operatorId = "OP-10",
+            operatorName = "Rakib",
+            customerInfo = "01700000000",
+            rawTotalPaisa = 10000L, // Authoritative 100.00 BDT despite 13 * 7.69 = 99.97
+            roundedTotalBdt = 100L,
+            isPaid = true,
+            paidAmountBdt = 100L
+        )
+        val lines = listOf(
+            InvoiceLineEntity(
+                orderId = "FUEL-769",
+                itemId = "item-1",
+                itemName = "Octane",
+                itemType = "Liquid",
+                unit = "Liter",
+                quantityStr = "7.69",
+                unitPricePaisa = 1300L,
+                lineTotalPaisa = 10000L,
+                sortOrder = 1
+            )
+        )
+
+        // 58mm English: must NOT silently truncate "7.69" or unit to 4 chars, must stay <= 32 chars
+        val en58 = ThermalReceiptFormatter.generateReceiptText(header, inv, lines, "58mm", "", "", true, "en")
+        assertTrue("58mm EN must preserve full 7.69 qty: $en58", en58.contains("7.69"))
+        assertTrue("58mm EN must preserve unit Liter: $en58", en58.contains("Liter"))
+        assertTrue("58mm EN must preserve authoritative 100.00 total: $en58", en58.contains("100.00"))
+        en58.lines().forEach { line ->
+            val vw = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("58mm EN line '$line' width $vw > 32", vw <= 32)
+        }
+
+        // 58mm Bengali
+        val bn58 = ThermalReceiptFormatter.generateReceiptText(header, inv, lines, "58mm", "", "", true, "bn")
+        assertTrue("58mm BN must preserve ৭.৬৯ লি.", bn58.contains("৭.৬৯ লি."))
+        assertTrue("58mm BN must preserve ১০০.০০", bn58.contains("১০০.০০"))
+        bn58.lines().forEach { line ->
+            val vw = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("58mm BN line '$line' width $vw > 32", vw <= 32)
+        }
+
+        // 80mm English
+        val en80 = ThermalReceiptFormatter.generateReceiptText(header, inv, lines, "80mm", "", "", true, "en")
+        assertTrue("80mm EN must preserve 7.69", en80.contains("7.69"))
+        assertTrue("80mm EN must preserve 100.00", en80.contains("100.00"))
+        en80.lines().forEach { line ->
+            val vw = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("80mm EN line '$line' width $vw > 48", vw <= 48)
+        }
+
+        // 80mm Bengali
+        val bn80 = ThermalReceiptFormatter.generateReceiptText(header, inv, lines, "80mm", "", "", true, "bn")
+        assertTrue("80mm BN must preserve ৭.৬৯", bn80.contains("৭.৬৯"))
+        assertTrue("80mm BN must preserve ১০০.০০", bn80.contains("১০০.০০"))
+        bn80.lines().forEach { line ->
+            val vw = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("80mm BN line '$line' width $vw > 48", vw <= 48)
+        }
+    }
+
+    @Test
+    fun testLongDecimalQuantityFallback_NoTruncationNoOverflow() {
+        val header = createSampleHeader()
+        val inv = InvoiceEntity(
+            orderId = "FUEL-LONG",
+            dateTime = 1711188000000L,
+            operatorId = "OP-10",
+            operatorName = "Rakib",
+            customerInfo = "01700000000",
+            rawTotalPaisa = 13003250L,
+            roundedTotalBdt = 130033L,
+            isPaid = true,
+            paidAmountBdt = 130033L
+        )
+        val lines = listOf(
+            InvoiceLineEntity(
+                orderId = "FUEL-LONG",
+                itemId = "item-1",
+                itemName = "Diesel",
+                itemType = "Fuel",
+                unit = "Liter",
+                quantityStr = "1000.25",
+                unitPricePaisa = 13000L,
+                lineTotalPaisa = 13003250L,
+                sortOrder = 1
+            )
+        )
+
+        val en58 = ThermalReceiptFormatter.generateReceiptText(header, inv, lines, "58mm", "", "", true, "en")
+        assertTrue("58mm must NOT truncate 1000.25", en58.contains("1000.25"))
+        assertTrue("58mm must NOT truncate 130032.50", en58.contains("130032.50"))
+        en58.lines().forEach { line ->
+            val vw = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("58mm long qty line '$line' width $vw > 32", vw <= 32)
+        }
+
+        val en80 = ThermalReceiptFormatter.generateReceiptText(header, inv, lines, "80mm", "", "", true, "en")
+        assertTrue("80mm must NOT truncate 1000.25", en80.contains("1000.25"))
+        assertTrue("80mm must NOT truncate 130032.50", en80.contains("130032.50"))
+        en80.lines().forEach { line ->
+            val vw = ThermalReceiptFormatter.getVisualWidth(line)
+            assertTrue("80mm long qty line '$line' width $vw > 48", vw <= 48)
+        }
+
+        // Verify ReceiptPreviewDialog parser handles 2-line 80mm fallback cleanly
+        val parsed80 = com.example.pos.ui.screens.parseReceiptSectionsForPreview(en80, emptyList(), "en")
+        assertNotNull("80mm 2-line fallback receipt must parse cleanly for preview", parsed80)
+        assertEquals(1, parsed80!!.table.rows.size)
+        assertEquals("1000.25", parsed80.table.rows[0].qty)
+        assertEquals("130032.50", parsed80.table.rows[0].total)
+
+        // Verify ESC/POS binary builds cleanly without crashing
+        val esc80 = ThermalReceiptFormatter.buildEscPosReceipt(header, inv, lines, "80mm", true, "", "", null, true, "en")
+        assertTrue(esc80.isNotEmpty())
+        val esc58 = ThermalReceiptFormatter.buildEscPosReceipt(header, inv, lines, "58mm", true, "", "", null, true, "en")
+        assertTrue(esc58.isNotEmpty())
+    }
+
     private fun List<Byte>.containsSubsequence(sub: ByteArray): Boolean {
         for (i in 0..this.size - sub.size) {
             var match = true

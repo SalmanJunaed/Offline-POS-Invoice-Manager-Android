@@ -2,9 +2,12 @@ package com.example.pos
 
 import android.app.Application
 import android.content.Context
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.pos.core.error.PosResult
+import com.example.pos.core.security.InMemoryAesGcmSessionCipher
+import com.example.pos.core.security.SecureSessionManager
 import com.example.pos.data.db.AppSettingsEntity
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
@@ -14,15 +17,20 @@ import com.example.pos.data.db.ProductEntity
 import com.example.pos.data.repository.HistoryRepositoryImpl
 import com.example.pos.data.repository.HistorySortOption
 import com.example.pos.data.repository.InvoiceRepositoryImpl
+import com.example.pos.data.repository.PosRepository
 import com.example.pos.ui.viewmodel.PosViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -262,33 +270,59 @@ class SalesHomeAndNavigationTest {
     @Test
     fun testSavePaidAndDueInvoicesOpenPreviewWithoutDirectPrint() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<Application>()
-        val vm = PosViewModel(app)
+        val appDb = PosDatabase.getInstance(app)
+        appDb.awaitInitialized()
 
-        val prod = ProductEntity(
-            itemId = "P-100",
-            itemName = "Engine Oil",
-            itemType = "Product",
-            unit = "Bottle",
-            defaultUnitPricePaisa = 45000L
-        )
-        vm.addItemFromCatalog(prod)
-        testDispatcher.scheduler.advanceUntilIdle()
-        assertEquals(450L, vm.roundedTotalBdt.value)
+        val dsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val dsFile = File(app.filesDir, "sales_home_test_session_${System.nanoTime()}.preferences_pb")
+        try {
+            val dataStore = PreferenceDataStoreFactory.create(scope = dsScope) { dsFile }
+            val sessionManager = SecureSessionManager.createForTest(
+                dataStore = dataStore,
+                cipher = InMemoryAesGcmSessionCipher()
+            )
+            val testRepo = PosRepository(app, appDb, sessionManager)
+            val reg = testRepo.registerOperator("Sales Cashier", "01777665544", "Dhaka", "1234")
+            assertTrue("Operator registration must succeed before checkout", reg.isSuccess)
 
-        // Checkout paid
-        vm.checkoutPaid()
-        var attempts = 0
-        while (!vm.receiptPreviewOpen.value && attempts < 30) {
-            Thread.sleep(50)
+            val vm = PosViewModel.createForTest(app, testRepo)
+            var authAttempts = 0
+            while (vm.activeOperator.value == null && authAttempts < 30) {
+                testDispatcher.scheduler.advanceUntilIdle()
+                Thread.sleep(30)
+                authAttempts++
+            }
+            assertNotNull("Authenticated operator must be active", vm.activeOperator.value)
+
+            val prod = ProductEntity(
+                itemId = "P-100",
+                itemName = "Engine Oil",
+                itemType = "Product",
+                unit = "Bottle",
+                defaultUnitPricePaisa = 45000L
+            )
+            vm.addItemFromCatalog(prod)
             testDispatcher.scheduler.advanceUntilIdle()
-            attempts++
-        }
+            assertEquals(450L, vm.roundedTotalBdt.value)
 
-        // Verify receipt preview is open and flag to navigate home after preview is set
-        assertTrue("Receipt preview must open after checkout (toast: ${vm.toastMessage.value})", vm.receiptPreviewOpen.value)
-        assertTrue("navigateHomeAfterPreview flag must be set", vm.navigateHomeAfterPreview.value)
-        assertFalse("Direct printing must NOT be actively running without preview confirmation", vm.isPrinting.value)
-        assertTrue("Draft must be cleared after successful checkout", vm.draftItems.value.isEmpty())
+            // Checkout paid
+            vm.checkoutPaid()
+            var attempts = 0
+            while (!vm.receiptPreviewOpen.value && attempts < 30) {
+                Thread.sleep(50)
+                testDispatcher.scheduler.advanceUntilIdle()
+                attempts++
+            }
+
+            // Verify receipt preview is open and flag to navigate home after preview is set
+            assertTrue("Receipt preview must open after checkout (toast: ${vm.toastMessage.value})", vm.receiptPreviewOpen.value)
+            assertTrue("navigateHomeAfterPreview flag must be set", vm.navigateHomeAfterPreview.value)
+            assertFalse("Direct printing must NOT be actively running without preview confirmation", vm.isPrinting.value)
+            assertTrue("Draft must be cleared after successful checkout", vm.draftItems.value.isEmpty())
+        } finally {
+            dsScope.cancel()
+            dsFile.delete()
+        }
     }
 
     // 14. Closing Invoice Preview returns to Sales Home and refreshes list

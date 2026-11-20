@@ -4,11 +4,18 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.pos.core.error.PosError
 import com.example.pos.core.error.PosResult
+import com.example.pos.core.security.AuthInputValidator
 import com.example.pos.core.util.CompanyLogoManager
 import com.example.pos.data.Localization
+import com.example.pos.data.audit.AuditCategoryFilter
+import com.example.pos.data.audit.AuditDateFilter
+import com.example.pos.data.db.AuditLogEntity
+import com.example.pos.data.db.AuditOperatorOption
 import com.example.pos.data.db.CompanyHeaderEntity
 import com.example.pos.data.db.CustomerEntity
 import com.example.pos.data.db.InvoiceEntity
@@ -18,6 +25,7 @@ import com.example.pos.data.db.PaymentRecordEntity
 import com.example.pos.data.db.ProductEntity
 import com.example.pos.data.db.ItemSalesSummary
 import com.example.pos.data.repository.HistorySortOption
+import com.example.pos.data.repository.PosErrorException
 import com.example.pos.data.repository.PosRepository
 import com.example.pos.domain.FinancialCalculationEngine
 import com.example.pos.excel.ExcelExchangeEngine
@@ -29,7 +37,9 @@ import com.example.pos.printer.EscPosPrinterEngine
 import com.example.pos.printer.PrinterConnectionState
 import com.example.pos.printer.ThermalReceiptFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -38,13 +48,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import java.io.File
 import java.math.BigDecimal
 import java.util.Calendar
 import java.util.UUID
+
+enum class DraftCalculationDriver {
+    QUANTITY,
+    TOTAL_AMOUNT
+}
 
 data class DraftInvoiceItem(
     val tempId: String = UUID.randomUUID().toString(),
@@ -55,7 +72,9 @@ data class DraftInvoiceItem(
     val quantityStr: String,
     val unitPriceBdtStr: String,
     val unitPricePaisa: Long,
-    val lineTotalPaisa: Long
+    val lineTotalPaisa: Long,
+    val lineTotalBdtStr: String = FinancialCalculationEngine.formatPaisaToBdtInput(lineTotalPaisa),
+    val calculationDriver: DraftCalculationDriver = DraftCalculationDriver.QUANTITY
 )
 
 enum class DateFilterMode {
@@ -70,9 +89,25 @@ enum class AnalyticsMetric {
     ROUNDED_SALES, RAW_SALES, TRANSACTION_COUNT
 }
 
-class PosViewModel(application: Application) : AndroidViewModel(application) {
+class PosViewModel private constructor(
+    application: Application,
+    private val repository: PosRepository
+) : AndroidViewModel(application) {
 
-    private val repository = PosRepository(application)
+    constructor(application: Application) : this(application, PosRepository(application))
+
+    companion object {
+        @VisibleForTesting
+        internal fun createForTest(
+            application: Application,
+            repository: PosRepository
+        ): PosViewModel = PosViewModel(application, repository)
+    }
+
+    @VisibleForTesting
+    internal fun cancelScopeForTest() {
+        viewModelScope.cancel()
+    }
 
     // Language & Theme State
     private val _language = MutableStateFlow("bn")
@@ -385,17 +420,157 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDeletingInvoice = MutableStateFlow(false)
     val isDeletingInvoice: StateFlow<Boolean> = _isDeletingInvoice.asStateFlow()
 
-    // Session initialization state
+    // Session initialization & operator availability state
     private val _isSessionChecking = MutableStateFlow(true)
     val isSessionChecking: StateFlow<Boolean> = _isSessionChecking.asStateFlow()
 
-    init {
-        // Check and restore active session based on remember-me and secure storage
-        viewModelScope.launch {
-            repository.checkAndRestoreSession()
-            _isSessionChecking.value = false
-        }
+    private val _operatorCount = MutableStateFlow(0)
+    val operatorCount: StateFlow<Int> = _operatorCount.asStateFlow()
 
+    private val _hasRegisteredOperators = MutableStateFlow(false)
+    val hasRegisteredOperators: StateFlow<Boolean> = _hasRegisteredOperators.asStateFlow()
+
+    // In-memory-only registration & one-time recovery confirmation state (never persisted in prefs/DB)
+    private val _isRegistering = MutableStateFlow(false)
+    val isRegistering: StateFlow<Boolean> = _isRegistering.asStateFlow()
+
+    private val _pendingRecoveryCode = MutableStateFlow<String?>(null)
+    val pendingRecoveryCode: StateFlow<String?> = _pendingRecoveryCode.asStateFlow()
+
+    private val _pendingRecoveryOperatorName = MutableStateFlow<String?>(null)
+    val pendingRecoveryOperatorName: StateFlow<String?> = _pendingRecoveryOperatorName.asStateFlow()
+
+    // Login, Lockout & Offline Recovery UI states (transient in-memory only)
+    private val _isLoggingIn = MutableStateFlow(false)
+    val isLoggingIn: StateFlow<Boolean> = _isLoggingIn.asStateFlow()
+
+    private val _loginLockoutSeconds = MutableStateFlow(0L)
+    val loginLockoutSeconds: StateFlow<Long> = _loginLockoutSeconds.asStateFlow()
+
+    private val _rememberedPhoneHint = MutableStateFlow("")
+    val rememberedPhoneHint: StateFlow<String> = _rememberedPhoneHint.asStateFlow()
+
+    private val _rememberMeHintEnabled = MutableStateFlow(false)
+    val rememberMeHintEnabled: StateFlow<Boolean> = _rememberMeHintEnabled.asStateFlow()
+
+    private val _isVerifyingRecovery = MutableStateFlow(false)
+    val isVerifyingRecovery: StateFlow<Boolean> = _isVerifyingRecovery.asStateFlow()
+
+    private val _isResettingPassword = MutableStateFlow(false)
+    val isResettingPassword: StateFlow<Boolean> = _isResettingPassword.asStateFlow()
+
+    private val _isRegeneratingRecoveryCode = MutableStateFlow(false)
+    val isRegeneratingRecoveryCode: StateFlow<Boolean> = _isRegeneratingRecoveryCode.asStateFlow()
+
+    // Strictly transient in-memory display buffer for regenerated recovery code (never persisted)
+    private val _managedRecoveryCode = MutableStateFlow<String?>(null)
+    val managedRecoveryCode: StateFlow<String?> = _managedRecoveryCode.asStateFlow()
+
+    private val _loginBannerMessage = MutableStateFlow<String?>(null)
+    val loginBannerMessage: StateFlow<String?> = _loginBannerMessage.asStateFlow()
+
+    @Volatile
+    private var cachedRememberedPhone: String = ""
+
+    @Volatile
+    private var cachedRememberMeSaved: Boolean = false
+
+    // Employee Activity & Audit Trail State
+    private val _auditOperatorFilter = MutableStateFlow("")
+    val auditOperatorFilter: StateFlow<String> = _auditOperatorFilter.asStateFlow()
+
+    private val _auditCategoryFilter = MutableStateFlow(AuditCategoryFilter.ALL)
+    val auditCategoryFilter: StateFlow<AuditCategoryFilter> = _auditCategoryFilter.asStateFlow()
+
+    private val _auditDateFilter = MutableStateFlow(AuditDateFilter.ALL)
+    val auditDateFilter: StateFlow<AuditDateFilter> = _auditDateFilter.asStateFlow()
+
+    private val _auditCustomStartDate = MutableStateFlow<Long?>(null)
+    val auditCustomStartDate: StateFlow<Long?> = _auditCustomStartDate.asStateFlow()
+
+    private val _auditCustomEndDate = MutableStateFlow<Long?>(null)
+    val auditCustomEndDate: StateFlow<Long?> = _auditCustomEndDate.asStateFlow()
+
+    private val _auditQuery = MutableStateFlow("")
+    val auditQuery: StateFlow<String> = _auditQuery.asStateFlow()
+
+    private val _auditCurrentPage = MutableStateFlow(0)
+    val auditCurrentPage: StateFlow<Int> = _auditCurrentPage.asStateFlow()
+
+    val auditPageSize = 30
+
+    val auditOperators: StateFlow<List<AuditOperatorOption>> = repository.audit
+        .getDistinctAuditOperators()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private data class AuditQueryParams(
+        val operatorFilter: String,
+        val categoryFilter: AuditCategoryFilter,
+        val dateFilter: AuditDateFilter,
+        val customStart: Long?,
+        val customEnd: Long?,
+        val query: String,
+        val page: Int
+    )
+
+    private val auditQueryParamsFlow = combine(
+        combine(_auditOperatorFilter, _auditCategoryFilter, _auditDateFilter) { op, cat, date ->
+            Triple(op, cat, date)
+        },
+        combine(_auditCustomStartDate, _auditCustomEndDate, _auditQuery, _auditCurrentPage) { cs, ce, q, p ->
+            listOf(cs, ce, q, p)
+        }
+    ) { (op, cat, date), extras ->
+        AuditQueryParams(
+            operatorFilter = op,
+            categoryFilter = cat,
+            dateFilter = date,
+            customStart = extras[0] as Long?,
+            customEnd = extras[1] as Long?,
+            query = extras[2] as String,
+            page = extras[3] as Int
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val auditLogs: StateFlow<List<AuditLogEntity>> = auditQueryParamsFlow
+        .flatMapLatest { params ->
+            val (startDate, endDate) = calculateAuditDateRange(
+                params.dateFilter,
+                params.customStart,
+                params.customEnd
+            )
+            repository.audit.getAuditLogsPaged(
+                operatorFilter = params.operatorFilter,
+                categoryFilter = params.categoryFilter,
+                query = params.query,
+                startDate = startDate,
+                endDate = endDate,
+                limit = auditPageSize,
+                offset = params.page * auditPageSize
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val auditTotalCount: StateFlow<Int> = auditQueryParamsFlow
+        .flatMapLatest { params ->
+            val (startDate, endDate) = calculateAuditDateRange(
+                params.dateFilter,
+                params.customStart,
+                params.customEnd
+            )
+            repository.audit.getAuditLogsCount(
+                operatorFilter = params.operatorFilter,
+                categoryFilter = params.categoryFilter,
+                query = params.query,
+                startDate = startDate,
+                endDate = endDate
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    init {
         // Observe settings changes for language and theme
         viewModelScope.launch {
             repository.appSettingsFlow.collect { settings ->
@@ -405,18 +580,80 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        refreshNextOrderId()
-        refreshHistory()
-        refreshPairedPrinters()
-        refreshDatabaseSize()
+
+        // Continuously mirror Room operator count changes
+        viewModelScope.launch {
+            repository.operatorCountFlow.collect { count ->
+                _operatorCount.value = count
+                _hasRegisteredOperators.value = count > 0
+            }
+        }
+
+        // Check and restore active session AFTER DB initialization, then load initial POS state
+        viewModelScope.launch {
+            try {
+                repository.checkAndRestoreSession()
+                val initialCount = repository.getOperatorCount()
+                _operatorCount.value = initialCount
+                _hasRegisteredOperators.value = initialCount > 0
+                refreshRememberedAuthHints()
+                if (cachedRememberedPhone.isNotBlank()) {
+                    _loginLockoutSeconds.value = runCatching {
+                        repository.getLockoutRemainingSeconds(cachedRememberedPhone)
+                    }.getOrDefault(0L)
+                }
+            } finally {
+                _isSessionChecking.value = false
+            }
+            refreshNextOrderId()
+            refreshHistory()
+            refreshPairedPrinters()
+            refreshDatabaseSize()
+        }
+    }
+
+    private suspend fun refreshRememberedAuthHints() {
+        val phone = runCatching { repository.getRememberedPhone() }.getOrDefault("")
+        val remember = runCatching { repository.isRememberMeSaved() }.getOrDefault(false)
+        cachedRememberedPhone = phone
+        cachedRememberMeSaved = remember
+        _rememberedPhoneHint.value = phone
+        _rememberMeHintEnabled.value = remember
     }
 
     fun getRememberedPhone(): String {
-        return repository.getRememberedPhone()
+        return cachedRememberedPhone
     }
 
     fun isRememberMeSaved(): Boolean {
-        return repository.isRememberMeSaved()
+        return cachedRememberMeSaved
+    }
+
+    fun clearLoginBanner() {
+        _loginBannerMessage.value = null
+    }
+
+    fun refreshLockoutStatus(phone: String) {
+        val normalized = AuthInputValidator.normalizePhone(phone)
+        if (normalized.isBlank()) {
+            _loginLockoutSeconds.value = 0L
+            return
+        }
+        viewModelScope.launch {
+            val remaining = runCatching {
+                repository.getLockoutRemainingSeconds(normalized)
+            }.getOrDefault(0L)
+            _loginLockoutSeconds.value = remaining
+        }
+    }
+
+    fun tickOrRefreshLockout(phone: String) {
+        val current = _loginLockoutSeconds.value
+        if (current > 1L) {
+            _loginLockoutSeconds.value = current - 1L
+        } else {
+            refreshLockoutStatus(phone)
+        }
     }
 
     fun refreshDatabaseSize() {
@@ -521,6 +758,14 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 repository.saveCustomer(customer)
                 _toastMessage.value = "Customer saved successfully"
                 onComplete(true, null)
+            } catch (e: PosErrorException) {
+                val msg = if (e.posError is PosError.Unauthenticated) {
+                    Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                } else {
+                    e.message
+                }
+                _toastMessage.value = msg
+                onComplete(false, msg)
             } catch (e: Exception) {
                 onComplete(false, e.message)
             }
@@ -544,14 +789,16 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             quantityStr = qtyStr,
             unitPriceBdtStr = priceBdtStr,
             unitPricePaisa = product.defaultUnitPricePaisa,
-            lineTotalPaisa = lineTotal
+            lineTotalPaisa = lineTotal,
+            lineTotalBdtStr = FinancialCalculationEngine.formatPaisaToBdtInput(lineTotal),
+            calculationDriver = DraftCalculationDriver.QUANTITY
         )
         _draftItems.value = _draftItems.value + newItem
     }
 
     fun addCustomItem(name: String, priceBdtText: String, qtyText: String, unitText: String, itemType: String = "Product") {
         val cleanName = name.trim().ifEmpty { "Custom Service" }
-        val pricePaisa = FinancialCalculationEngine.parseBdtToPaisa(priceBdtText)
+        val pricePaisa = FinancialCalculationEngine.parseBdtToPaisa(priceBdtText).coerceAtLeast(0L)
         val cleanQty = qtyText.trim().ifEmpty { "1" }
         val qty = FinancialCalculationEngine.parseQuantity(cleanQty)
         val cleanUnit = unitText.trim().ifEmpty { "Unit" }
@@ -566,7 +813,9 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             quantityStr = cleanQty,
             unitPriceBdtStr = FinancialCalculationEngine.formatPaisaToBdtInput(pricePaisa),
             unitPricePaisa = pricePaisa,
-            lineTotalPaisa = lineTotal
+            lineTotalPaisa = lineTotal,
+            lineTotalBdtStr = FinancialCalculationEngine.formatPaisaToBdtInput(lineTotal),
+            calculationDriver = DraftCalculationDriver.QUANTITY
         )
         _draftItems.value = _draftItems.value + newItem
     }
@@ -580,7 +829,35 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             val newTotal = FinancialCalculationEngine.calculateLineTotal(item.unitPricePaisa, qty)
             currentList[index] = item.copy(
                 quantityStr = newQtyText,
-                lineTotalPaisa = newTotal
+                lineTotalPaisa = newTotal,
+                lineTotalBdtStr = FinancialCalculationEngine.formatPaisaToBdtInput(newTotal),
+                calculationDriver = DraftCalculationDriver.QUANTITY
+            )
+            _draftItems.value = currentList
+        }
+    }
+
+    fun updateItemTotalAmount(tempId: String, newTotalBdtText: String) {
+        val currentList = _draftItems.value.toMutableList()
+        val index = currentList.indexOfFirst { it.tempId == tempId }
+        if (index != -1) {
+            val item = currentList[index]
+            if (!FinancialCalculationEngine.isLiquidOrFuelType(item.itemType)) return
+
+            val newTotalPaisa = FinancialCalculationEngine.parseBdtToPaisa(newTotalBdtText).coerceAtLeast(0L)
+            val updatedQtyStr = if (item.unitPricePaisa > 0L) {
+                FinancialCalculationEngine.formatQuantity(
+                    FinancialCalculationEngine.calculateQuantityFromTotal(newTotalPaisa, item.unitPricePaisa)
+                )
+            } else {
+                if (newTotalPaisa == 0L) "0" else item.quantityStr
+            }
+
+            currentList[index] = item.copy(
+                quantityStr = updatedQtyStr,
+                lineTotalPaisa = newTotalPaisa,
+                lineTotalBdtStr = newTotalBdtText,
+                calculationDriver = DraftCalculationDriver.TOTAL_AMOUNT
             )
             _draftItems.value = currentList
         }
@@ -591,14 +868,32 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val index = currentList.indexOfFirst { it.tempId == tempId }
         if (index != -1) {
             val item = currentList[index]
-            val newPricePaisa = FinancialCalculationEngine.parseBdtToPaisa(newPriceBdtText)
-            val qty = FinancialCalculationEngine.parseQuantity(item.quantityStr)
-            val newTotal = FinancialCalculationEngine.calculateLineTotal(newPricePaisa, qty)
-            currentList[index] = item.copy(
-                unitPriceBdtStr = newPriceBdtText,
-                unitPricePaisa = newPricePaisa,
-                lineTotalPaisa = newTotal
-            )
+            val newPricePaisa = FinancialCalculationEngine.parseBdtToPaisa(newPriceBdtText).coerceAtLeast(0L)
+            val isLiquid = FinancialCalculationEngine.isLiquidOrFuelType(item.itemType)
+
+            if (isLiquid && item.calculationDriver == DraftCalculationDriver.TOTAL_AMOUNT) {
+                val updatedQtyStr = if (newPricePaisa > 0L) {
+                    FinancialCalculationEngine.formatQuantity(
+                        FinancialCalculationEngine.calculateQuantityFromTotal(item.lineTotalPaisa, newPricePaisa)
+                    )
+                } else {
+                    if (item.lineTotalPaisa == 0L) "0" else item.quantityStr
+                }
+                currentList[index] = item.copy(
+                    unitPriceBdtStr = newPriceBdtText,
+                    unitPricePaisa = newPricePaisa,
+                    quantityStr = updatedQtyStr
+                )
+            } else {
+                val qty = FinancialCalculationEngine.parseQuantity(item.quantityStr)
+                val newTotal = FinancialCalculationEngine.calculateLineTotal(newPricePaisa, qty)
+                currentList[index] = item.copy(
+                    unitPriceBdtStr = newPriceBdtText,
+                    unitPricePaisa = newPricePaisa,
+                    lineTotalPaisa = newTotal,
+                    lineTotalBdtStr = FinancialCalculationEngine.formatPaisaToBdtInput(newTotal)
+                )
+            }
             _draftItems.value = currentList
         }
     }
@@ -642,11 +937,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val rawTotal = FinancialCalculationEngine.calculateRawTotal(lines.map { it.lineTotalPaisa })
         val roundedTotal = FinancialCalculationEngine.calculateRoundedTotalBdt(rawTotal)
 
+        val operator = activeOperator.value
         val invoice = InvoiceEntity(
             orderId = _draftOrderId.value,
             dateTime = System.currentTimeMillis(),
-            operatorId = activeOperator.value?.userId ?: "OP-101",
-            operatorName = activeOperator.value?.operatorName ?: "Operator",
+            operatorId = operator?.userId ?: "",
+            operatorName = operator?.operatorName ?: "",
             customerInfo = _customerInfo.value.ifBlank { "N/A" },
             rawTotalPaisa = rawTotal,
             roundedTotalBdt = roundedTotal,
@@ -704,6 +1000,17 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val currentOperator = activeOperator.value
+        if (currentOperator == null) {
+            val isBn = _language.value == "bn"
+            _toastMessage.value = if (isBn) {
+                "অর্ডার সম্পন্ন করতে অনুগ্রহ করে লগইন করুন।"
+            } else {
+                "Please sign in as an operator before completing checkout."
+            }
+            return
+        }
+
         if (_isProcessingOrder.value) {
             return
         }
@@ -711,9 +1018,19 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
+                val operator = activeOperator.value ?: repository.getActiveOperator()
+                if (operator == null) {
+                    val isBn = _language.value == "bn"
+                    _toastMessage.value = if (isBn) {
+                        "সক্রিয় অপারেটর সেশন নেই। অনুগ্রহ করে পুনরায় লগইন করুন।"
+                    } else {
+                        "Active operator session required to save invoice."
+                    }
+                    return@launch
+                }
+
                 val orderId = _draftOrderId.value
                 val now = System.currentTimeMillis()
-                val operator = activeOperator.value
                 val settings = appSettings.value
 
                 val header = companyHeader.value
@@ -739,13 +1056,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 val validatedPaidAmountBdt = paidAmountBdt.coerceIn(0L, roundedTotal)
                 val finalIsPaid = (validatedPaidAmountBdt == roundedTotal)
 
-                val invoice = InvoiceEntity(
+                val invoiceTemplate = InvoiceEntity(
                     orderId = orderId,
                     globalTransactionId = globalId,
                     branchCode = branchCode,
                     dateTime = now,
-                    operatorId = operator?.userId ?: "OP-101",
-                    operatorName = operator?.operatorName ?: "Operator",
+                    operatorId = operator.userId,
+                    operatorName = operator.operatorName,
                     customerInfo = _customerInfo.value.ifBlank { "01700000000" },
                     rawTotalPaisa = rawTotal,
                     roundedTotalBdt = roundedTotal,
@@ -756,51 +1073,54 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     updatedAt = now
                 )
 
-                val payment = if (validatedPaidAmountBdt > 0L) {
-                    PaymentRecordEntity(
-                        orderId = orderId,
-                        paymentMethod = "CASH",
-                        amountPaidPaisa = validatedPaidAmountBdt * 100L,
-                        transactionRef = null,
-                        timestamp = now,
-                        createdAt = now
-                    )
-                } else null
-
-                repository.saveOrder(invoice, lines, payment)
                 val customerToRecord = _customerInfo.value.trim().ifBlank { "01700000000" }
-                repository.recordCustomerOrder(customerToRecord, rawSubtotalPaisa.value)
-
-                val paperSize = settings?.paperSize ?: "58mm"
-                val autoCutter = settings?.autoCutterEnabled ?: true
-                val receiptText = ThermalReceiptFormatter.generateReceiptText(
-                    header = companyHeader.value,
-                    invoice = invoice,
+                val checkoutResult = repository.checkoutOrderAtomic(
+                    invoiceTemplate = invoiceTemplate,
                     lines = lines,
-                    paperSize = paperSize,
-                    footerLine1 = settings?.footerNoteLine1 ?: "",
-                    footerLine2 = settings?.footerNoteLine2 ?: "",
-                    isFullPaid = finalIsPaid,
-                    lang = _language.value
+                    customerInfoForCrm = customerToRecord
                 )
 
-                // Mandatory Invoice Preview: Open preview after atomic save; do NOT print automatically!
-                _selectedInvoiceForReceipt.value = invoice
-                _receiptPopupLines.value = lines
-                _receiptPreviewText.value = receiptText
-                _receiptPreviewOpen.value = true
-                _isReceiptPopupOpen.value = true
-                _navigateHomeAfterPreview.value = true
+                when (checkoutResult) {
+                    is PosResult.Error -> {
+                        val isBn = _language.value == "bn"
+                        _toastMessage.value = when (checkoutResult.error) {
+                            is PosError.Unauthenticated -> Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                            else -> if (isBn) "লেনদেন ব্যর্থ: ${checkoutResult.error.message}" else "Transaction failed: ${checkoutResult.error.message}"
+                        }
+                    }
+                    is PosResult.Success -> {
+                        val savedInvoice = checkoutResult.data
+                        val paperSize = settings?.paperSize ?: "58mm"
+                        val receiptText = ThermalReceiptFormatter.generateReceiptText(
+                            header = companyHeader.value,
+                            invoice = savedInvoice,
+                            lines = lines,
+                            paperSize = paperSize,
+                            footerLine1 = settings?.footerNoteLine1 ?: "",
+                            footerLine2 = settings?.footerNoteLine2 ?: "",
+                            isFullPaid = finalIsPaid,
+                            lang = _language.value
+                        )
 
-                val isBn = _language.value == "bn"
-                _toastMessage.value = if (isBn) "ইনভয়েস সফলভাবে সংরক্ষিত হয়েছে!" else "Invoice saved successfully!"
+                        // Mandatory Invoice Preview: Open preview after atomic save; do NOT print automatically!
+                        _selectedInvoiceForReceipt.value = savedInvoice
+                        _receiptPopupLines.value = lines
+                        _receiptPreviewText.value = receiptText
+                        _receiptPreviewOpen.value = true
+                        _isReceiptPopupOpen.value = true
+                        _navigateHomeAfterPreview.value = true
 
-                // Clear draft and generate new order ID for next sale
-                _draftItems.value = emptyList()
-                _customerInfo.value = ""
-                _draftPaidAmountBdt.value = ""
-                refreshNextOrderId()
-                refreshHistory()
+                        val isBn = _language.value == "bn"
+                        _toastMessage.value = if (isBn) "ইনভয়েস সফলভাবে সংরক্ষিত হয়েছে!" else "Invoice saved successfully!"
+
+                        // Clear draft and generate new order ID for next sale
+                        _draftItems.value = emptyList()
+                        _customerInfo.value = ""
+                        _draftPaidAmountBdt.value = ""
+                        refreshNextOrderId()
+                        refreshHistory()
+                    }
+                }
             } catch (e: Exception) {
                 _toastMessage.value = "Transaction failed: ${e.message}"
             } finally {
@@ -851,37 +1171,54 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     fun updateInvoiceDetails(orderId: String, customerInfo: String, footerNote: String) {
         viewModelScope.launch {
             try {
-                val rows = repository.updateInvoiceCustomerAndNote(
-                    orderId = orderId,
-                    customerInfo = customerInfo.trim(),
-                    footerNote = footerNote.trim()
-                )
-                if (rows > 0) {
-                    val isBn = language.value == "bn"
-                    _toastMessage.value = if (isBn) "ভাউচারের বিবরণ সফলভাবে আপডেট করা হয়েছে।" else "Voucher details updated successfully."
-                    val curSelected = _selectedInvoiceForReceipt.value
-                    if (curSelected != null && curSelected.orderId == orderId) {
-                        val updatedInv = curSelected.copy(
-                            customerInfo = customerInfo.trim(),
-                            footerNote = footerNote.trim()
-                        )
-                        _selectedInvoiceForReceipt.value = updatedInv
-                        val header = companyHeader.value
-                        val settings = appSettings.value
-                        val paperSize = settings?.paperSize ?: "58mm"
-                        val text = ThermalReceiptFormatter.generateReceiptText(
-                            header = header,
-                            invoice = updatedInv,
-                            lines = _receiptPopupLines.value,
-                            paperSize = paperSize,
-                            footerLine1 = settings?.footerNoteLine1 ?: "",
-                            footerLine2 = settings?.footerNoteLine2 ?: "",
-                            isFullPaid = updatedInv.isPaid,
-                            lang = _language.value
-                        )
-                        _receiptPreviewText.value = text
+                when (
+                    val result = repository.updateInvoiceCustomerAndNoteAudited(
+                        orderId = orderId,
+                        customerInfo = customerInfo.trim(),
+                        footerNote = footerNote.trim()
+                    )
+                ) {
+                    is PosResult.Error -> {
+                        val msg = if (result.error is PosError.Unauthenticated) {
+                            Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                        } else {
+                            "Update failed: ${result.error.message}"
+                        }
+                        _toastMessage.value = msg
                     }
-                    refreshHistory()
+                    is PosResult.Success -> {
+                        if (result.data > 0) {
+                            val isBn = language.value == "bn"
+                            _toastMessage.value = if (isBn) "ভাউচারের বিবরণ সফলভাবে আপডেট করা হয়েছে।" else "Voucher details updated successfully."
+                            val freshInv = repository.getInvoiceById(orderId)
+                            val curSelected = _selectedInvoiceForReceipt.value
+                            if (curSelected != null && curSelected.orderId == orderId) {
+                                val updatedInv = freshInv ?: curSelected.copy(
+                                    customerInfo = customerInfo.trim(),
+                                    footerNote = footerNote.trim(),
+                                    updatedByOperatorId = activeOperator.value?.userId,
+                                    updatedByOperatorName = activeOperator.value?.operatorName,
+                                    updatedAt = System.currentTimeMillis()
+                                )
+                                _selectedInvoiceForReceipt.value = updatedInv
+                                val header = companyHeader.value
+                                val settings = appSettings.value
+                                val paperSize = settings?.paperSize ?: "58mm"
+                                val text = ThermalReceiptFormatter.generateReceiptText(
+                                    header = header,
+                                    invoice = updatedInv,
+                                    lines = _receiptPopupLines.value,
+                                    paperSize = paperSize,
+                                    footerLine1 = settings?.footerNoteLine1 ?: "",
+                                    footerLine2 = settings?.footerNoteLine2 ?: "",
+                                    isFullPaid = updatedInv.isPaid,
+                                    lang = _language.value
+                                )
+                                _receiptPreviewText.value = text
+                            }
+                            refreshHistory()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 _toastMessage.value = "Update failed: ${e.message}"
@@ -1332,22 +1669,39 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun getPaymentsForOrder(orderId: String): Flow<List<PaymentRecordEntity>> {
+        return repository.getPaymentsForOrder(orderId)
+    }
+
     fun deleteInvoice(orderId: String, onSuccess: (() -> Unit)? = null) {
         if (_isDeletingInvoice.value) return
         _isDeletingInvoice.value = true
         viewModelScope.launch {
             try {
-                repository.history.deleteOrder(orderId)
-                if (_selectedInvoiceForReceipt.value?.orderId == orderId) {
-                    _isReceiptPopupOpen.value = false
-                    _receiptPreviewOpen.value = false
-                    _selectedInvoiceForReceipt.value = null
+                when (val result = repository.deleteOrderAudited(orderId)) {
+                    is PosResult.Success -> {
+                        if (_selectedInvoiceForReceipt.value?.orderId == orderId) {
+                            _isReceiptPopupOpen.value = false
+                            _receiptPreviewOpen.value = false
+                            _selectedInvoiceForReceipt.value = null
+                        }
+                        val isBn = language.value == "bn"
+                        _toastMessage.value = if (isBn) "ভাউচার #$orderId সফলভাবে মুছে ফেলা হয়েছে।" else "Voucher #$orderId deleted successfully."
+                        refreshHistory()
+                        refreshDatabaseSize()
+                        onSuccess?.invoke()
+                    }
+                    is PosResult.Error -> {
+                        val isBn = language.value == "bn"
+                        _toastMessage.value = if (result.error is PosError.Unauthenticated) {
+                            Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                        } else if (isBn) {
+                            "ভাউচার মুছতে সমস্যা হয়েছে: ${result.error.message}"
+                        } else {
+                            "Failed to delete voucher: ${result.error.message}"
+                        }
+                    }
                 }
-                val isBn = language.value == "bn"
-                _toastMessage.value = if (isBn) "ভাউচার #$orderId সফলভাবে মুছে ফেলা হয়েছে।" else "Voucher #$orderId deleted successfully."
-                refreshHistory()
-                refreshDatabaseSize()
-                onSuccess?.invoke()
             } catch (e: Exception) {
                 val isBn = language.value == "bn"
                 _toastMessage.value = if (isBn) "ভাউচার মুছতে সমস্যা হয়েছে: ${e.message}" else "Failed to delete voucher: ${e.message}"
@@ -1415,9 +1769,18 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     _toastMessage.value = Localization.get(Localization.Key.EMPTY_INVOICE_PROMPT, _language.value)
                     return@launch
                 }
+                val operator = activeOperator.value ?: repository.getActiveOperator()
+                if (operator == null) {
+                    val isBn = _language.value == "bn"
+                    _toastMessage.value = if (isBn) {
+                        "পিডিএফ তৈরি করতে অনুগ্রহ করে লগইন করুন।"
+                    } else {
+                        "Please sign in as an operator to generate a draft PDF."
+                    }
+                    return@launch
+                }
                 val orderId = _draftOrderId.value
                 val now = System.currentTimeMillis()
-                val operator = activeOperator.value
                 val settings = appSettings.value
                 val header = companyHeader.value
                 val branchCode = header?.branchNumber?.ifBlank { "01" } ?: "01"
@@ -1443,8 +1806,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     globalTransactionId = globalId,
                     branchCode = branchCode,
                     dateTime = now,
-                    operatorId = operator?.userId ?: "OP-101",
-                    operatorName = operator?.operatorName ?: "Operator",
+                    operatorId = operator.userId,
+                    operatorName = operator.operatorName,
                     customerInfo = _customerInfo.value.ifBlank { "01700000000" },
                     rawTotalPaisa = rawTotal,
                     roundedTotalBdt = roundedTotal,
@@ -1490,6 +1853,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     repository.getLinesForOrderDirect(orderIdKey)
                 }
                 result.onSuccess { file ->
+                    repository.recordXlsxExportAudit(
+                        exportType = if (customRange != null || _exportDateRange.value != null) "RANGE_FILE" else "FULL_OR_FILTERED_FILE",
+                        recordCount = invoices.size,
+                        rangeLabel = if (customRange != null || _exportDateRange.value != null) "CUSTOM" else _dateFilter.value.name,
+                        fileName = file.name
+                    )
                     val isBn = language.value == "bn"
                     _toastMessage.value = if (isBn) "এক্সেল ফাইল এক্সপোর্ট সম্পন্ন: ${file.name}" else "Exported to: ${file.name}"
                     refreshDatabaseSize()
@@ -1521,6 +1890,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     repository.getLinesForOrderDirect(orderIdKey)
                 }
                 result.onSuccess {
+                    repository.recordXlsxExportAudit(
+                        exportType = if (customRange != null || _exportDateRange.value != null) "RANGE_URI" else "FULL_OR_FILTERED_URI",
+                        recordCount = invoices.size,
+                        rangeLabel = if (customRange != null || _exportDateRange.value != null) "CUSTOM" else _dateFilter.value.name,
+                        fileName = uri.lastPathSegment
+                    )
                     val isBn = language.value == "bn"
                     _toastMessage.value = if (isBn) "বিক্রয় লেনদেন সফলভাবে এক্সেল ফাইলে এক্সপোর্ট হয়েছে!" else "Sales transactions successfully exported to chosen file!"
                     refreshDatabaseSize()
@@ -1595,22 +1970,28 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             )
-            repository.saveProduct(entity)
-            _toastMessage.value = "Product saved!"
+            when (val res = repository.saveProductAudited(entity)) {
+                is PosResult.Success -> _toastMessage.value = "Product saved!"
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+            }
         }
     }
 
     fun deleteProduct(itemId: String) {
         viewModelScope.launch {
-            repository.deleteProduct(itemId)
-            _toastMessage.value = "Product removed"
+            when (val res = repository.deleteProductAudited(itemId)) {
+                is PosResult.Success -> _toastMessage.value = "Product removed"
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+            }
         }
     }
 
     fun reorderProducts(orderedItemIds: List<String>) {
         viewModelScope.launch {
-            repository.updateProductReorder(orderedItemIds)
-            _toastMessage.value = "Order updated!"
+            when (val res = repository.updateProductReorderAudited(orderedItemIds)) {
+                is PosResult.Success -> _toastMessage.value = "Order updated!"
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+            }
         }
     }
 
@@ -1650,8 +2031,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 logoUri = null,
                 updatedAt = System.currentTimeMillis()
             )
-            repository.updateCompanyHeader(updated)
-            _toastMessage.value = "Company header updated!"
+            when (val res = repository.updateCompanyHeaderAudited(updated, logoChangeAction = null)) {
+                is PosResult.Success -> _toastMessage.value = "Company header updated!"
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+            }
         }
     }
 
@@ -1661,6 +2044,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun setCompanyLogoUri(sourceUri: Uri) {
         viewModelScope.launch {
+            if (repository.getActiveOperator() == null) {
+                _toastMessage.value = Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                return@launch
+            }
             val app = getApplication<Application>()
             val savedPath = CompanyLogoManager.copyLogoFromUri(app, sourceUri)
             if (savedPath != null) {
@@ -1678,8 +2065,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     logoUri = savedPath,
                     updatedAt = System.currentTimeMillis()
                 )
-                repository.updateCompanyHeader(updated)
-                _toastMessage.value = Localization.get(Localization.Key.LOGO_ADDED_SUCCESS, _language.value)
+                when (val res = repository.updateCompanyHeaderAudited(updated, logoChangeAction = "CUSTOM_CONFIGURED")) {
+                    is PosResult.Success -> _toastMessage.value = Localization.get(Localization.Key.LOGO_ADDED_SUCCESS, _language.value)
+                    is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+                }
             } else {
                 _toastMessage.value = Localization.get(Localization.Key.LOGO_ERROR_READ, _language.value)
             }
@@ -1691,6 +2080,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun useOfficialDefaultLogo() {
         viewModelScope.launch {
+            if (repository.getActiveOperator() == null) {
+                _toastMessage.value = Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                return@launch
+            }
             val app = getApplication<Application>()
             val savedPath = CompanyLogoManager.copyDefaultOfficialLogo(app)
             if (savedPath != null) {
@@ -1708,8 +2101,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     logoUri = savedPath,
                     updatedAt = System.currentTimeMillis()
                 )
-                repository.updateCompanyHeader(updated)
-                _toastMessage.value = Localization.get(Localization.Key.LOGO_ADDED_SUCCESS, _language.value)
+                when (val res = repository.updateCompanyHeaderAudited(updated, logoChangeAction = "OFFICIAL_DEFAULT")) {
+                    is PosResult.Success -> _toastMessage.value = Localization.get(Localization.Key.LOGO_ADDED_SUCCESS, _language.value)
+                    is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+                }
             } else {
                 _toastMessage.value = Localization.get(Localization.Key.LOGO_ERROR_READ, _language.value)
             }
@@ -1721,6 +2116,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun removeCompanyLogo() {
         viewModelScope.launch {
+            if (repository.getActiveOperator() == null) {
+                _toastMessage.value = Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, _language.value)
+                return@launch
+            }
             val app = getApplication<Application>()
             CompanyLogoManager.removeLogo(app)
             val current = companyHeader.value
@@ -1729,30 +2128,65 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     logoUri = null,
                     updatedAt = System.currentTimeMillis()
                 )
-                repository.updateCompanyHeader(updated)
+                when (val res = repository.updateCompanyHeaderAudited(updated, logoChangeAction = "REMOVED")) {
+                    is PosResult.Success -> _toastMessage.value = Localization.get(Localization.Key.LOGO_REMOVED_SUCCESS, _language.value)
+                    is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+                }
+            } else {
+                _toastMessage.value = Localization.get(Localization.Key.LOGO_REMOVED_SUCCESS, _language.value)
             }
-            _toastMessage.value = Localization.get(Localization.Key.LOGO_REMOVED_SUCCESS, _language.value)
         }
     }
 
     fun updateOperatorProfile(name: String, phone: String, address: String) {
         viewModelScope.launch {
-            repository.updateOperatorProfile(name, phone, address)
-            _toastMessage.value = "Operator profile updated!"
+            val lang = _language.value
+            val trimmedName = name.trim()
+            val normalizedPhone = AuthInputValidator.normalizePhone(phone)
+            val res = repository.updateOperatorProfile(trimmedName, normalizedPhone, address.trim())
+            if (res.isSuccess) {
+                refreshRememberedAuthHints()
+                _toastMessage.value = Localization.get(Localization.Key.OPERATOR_PROFILE_SAVED_SUCCESS, lang)
+            } else {
+                val posErr = (res.exceptionOrNull() as? PosErrorException)?.posError
+                _toastMessage.value = when (posErr) {
+                    is PosError.UserAlreadyExists -> Localization.get(Localization.Key.REG_ERR_DUPLICATE_PHONE, lang)
+                    is PosError.ValidationError -> when {
+                        trimmedName.isBlank() -> Localization.get(Localization.Key.REG_ERR_NAME_REQUIRED, lang)
+                        trimmedName.length < AuthInputValidator.MIN_NAME_LENGTH ->
+                            Localization.get(Localization.Key.REG_ERR_NAME_TOO_SHORT, lang)
+                        trimmedName.length > AuthInputValidator.MAX_NAME_LENGTH ->
+                            Localization.get(Localization.Key.REG_ERR_NAME_TOO_LONG, lang)
+                        normalizedPhone.isBlank() -> Localization.get(Localization.Key.REG_ERR_PHONE_REQUIRED, lang)
+                        else -> Localization.get(Localization.Key.REG_ERR_PHONE_INVALID, lang)
+                    }
+                    else -> Localization.get(Localization.Key.OPERATOR_PROFILE_UPDATE_FAILED, lang)
+                }
+            }
         }
     }
 
     fun updateFooterNotes(line1: String, line2: String) {
         viewModelScope.launch {
-            repository.updateFooterNotes(line1, line2)
-            _toastMessage.value = "Footer notes saved!"
+            when (val res = repository.updateFooterNotesAudited(line1, line2)) {
+                is PosResult.Success -> _toastMessage.value = "Footer notes saved!"
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+            }
         }
     }
 
     fun setLanguage(lang: String) {
+        val prevLang = _language.value
         _language.value = lang
         viewModelScope.launch {
-            repository.updateLanguage(lang)
+            when (val res = repository.updateLanguageAudited(lang)) {
+                is PosResult.Error -> {
+                    _language.value = prevLang
+                    _toastMessage.value = handleAuditedErrorMessage(res.error, prevLang)
+                    return@launch
+                }
+                is PosResult.Success -> Unit
+            }
         }
         if (_receiptPreviewOpen.value) {
             _receiptPreviewText.value = generateCurrentReceiptText()
@@ -1780,28 +2214,169 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setThemeMode(mode: String) {
+        val prevMode = _themeMode.value
         _themeMode.value = mode
         viewModelScope.launch {
-            repository.updateThemeMode(mode)
+            when (val res = repository.updateThemeModeAudited(mode)) {
+                is PosResult.Error -> {
+                    _themeMode.value = prevMode
+                    _toastMessage.value = handleAuditedErrorMessage(res.error)
+                }
+                is PosResult.Success -> Unit
+            }
         }
     }
 
     fun setPaperSize(size: String) {
         viewModelScope.launch {
-            repository.updatePaperSize(size)
+            when (val res = repository.updatePaperSizeAudited(size)) {
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+                is PosResult.Success -> Unit
+            }
         }
     }
 
     fun setAutoCutter(enabled: Boolean) {
         viewModelScope.launch {
-            repository.updateAutoCutter(enabled)
+            when (val res = repository.updateAutoCutterAudited(enabled)) {
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+                is PosResult.Success -> Unit
+            }
         }
     }
 
     fun setBluetoothPrinter(address: String?, name: String?) {
         viewModelScope.launch {
-            repository.updateBluetoothPrinter(address, name)
-            _toastMessage.value = "Printer set to: ${name ?: address ?: "None"}"
+            when (val res = repository.updateBluetoothPrinterAudited(address, name)) {
+                is PosResult.Success -> _toastMessage.value = "Printer set to: ${name ?: address ?: "None"}"
+                is PosResult.Error -> _toastMessage.value = handleAuditedErrorMessage(res.error)
+            }
+        }
+    }
+
+    private fun handleAuditedErrorMessage(error: PosError, lang: String = _language.value): String {
+        return when (error) {
+            is PosError.Unauthenticated -> Localization.get(Localization.Key.ERR_AUTH_REQUIRED_ACTION, lang)
+            else -> error.message
+        }
+    }
+
+    // Employee Activity History filter & pagination controls
+    fun setAuditOperatorFilter(operatorId: String) {
+        _auditOperatorFilter.value = operatorId
+        _auditCurrentPage.value = 0
+    }
+
+    fun setAuditCategoryFilter(category: AuditCategoryFilter) {
+        _auditCategoryFilter.value = category
+        _auditCurrentPage.value = 0
+    }
+
+    fun setAuditDateFilter(filter: AuditDateFilter) {
+        _auditDateFilter.value = filter
+        if (filter != AuditDateFilter.CUSTOM) {
+            _auditCustomStartDate.value = null
+            _auditCustomEndDate.value = null
+        }
+        _auditCurrentPage.value = 0
+    }
+
+    fun setAuditCustomDateRange(startDate: Long, endDate: Long) {
+        val calStart = Calendar.getInstance().apply {
+            timeInMillis = minOf(startDate, endDate)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val calEnd = Calendar.getInstance().apply {
+            timeInMillis = maxOf(startDate, endDate)
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        _auditCustomStartDate.value = calStart.timeInMillis
+        _auditCustomEndDate.value = calEnd.timeInMillis
+        _auditDateFilter.value = AuditDateFilter.CUSTOM
+        _auditCurrentPage.value = 0
+    }
+
+    fun setAuditQuery(query: String) {
+        _auditQuery.value = query
+        _auditCurrentPage.value = 0
+    }
+
+    fun nextAuditPage() {
+        val total = auditTotalCount.value
+        val nextOffset = (_auditCurrentPage.value + 1) * auditPageSize
+        if (nextOffset < total) {
+            _auditCurrentPage.value = _auditCurrentPage.value + 1
+        }
+    }
+
+    fun prevAuditPage() {
+        if (_auditCurrentPage.value > 0) {
+            _auditCurrentPage.value = _auditCurrentPage.value - 1
+        }
+    }
+
+    fun resetAuditFilters() {
+        _auditOperatorFilter.value = ""
+        _auditCategoryFilter.value = AuditCategoryFilter.ALL
+        _auditDateFilter.value = AuditDateFilter.ALL
+        _auditCustomStartDate.value = null
+        _auditCustomEndDate.value = null
+        _auditQuery.value = ""
+        _auditCurrentPage.value = 0
+    }
+
+    private fun calculateAuditDateRange(
+        filter: AuditDateFilter,
+        customStart: Long?,
+        customEnd: Long?
+    ): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        return when (filter) {
+            AuditDateFilter.ALL -> 0L to Long.MAX_VALUE
+            AuditDateFilter.TODAY -> {
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val start = cal.timeInMillis
+                start to (start + 86400000L - 1L)
+            }
+            AuditDateFilter.YESTERDAY -> {
+                cal.add(Calendar.DAY_OF_YEAR, -1)
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val start = cal.timeInMillis
+                start to (start + 86400000L - 1L)
+            }
+            AuditDateFilter.LAST_7_DAYS -> {
+                cal.add(Calendar.DAY_OF_YEAR, -7)
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                cal.timeInMillis to Long.MAX_VALUE
+            }
+            AuditDateFilter.LAST_30_DAYS -> {
+                cal.add(Calendar.DAY_OF_YEAR, -30)
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                cal.timeInMillis to Long.MAX_VALUE
+            }
+            AuditDateFilter.CUSTOM -> {
+                val start = customStart ?: 0L
+                val end = customEnd ?: Long.MAX_VALUE
+                start to end
+            }
         }
     }
 
@@ -1848,41 +2423,288 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     // Auth Operations
     fun login(phone: String, pass: String, remember: Boolean, onResult: (Boolean, String?) -> Unit) {
+        if (_isLoggingIn.value) return
+        _isLoggingIn.value = true
+        _loginBannerMessage.value = null
+
         viewModelScope.launch {
-            val res = repository.login(phone, pass, remember)
-            if (res.isSuccess) {
-                onResult(true, null)
-            } else {
-                onResult(false, res.exceptionOrNull()?.message ?: "Login failed")
+            try {
+                val normalizedPhone = AuthInputValidator.normalizePhone(phone)
+                val res = repository.login(normalizedPhone, pass, remember)
+                refreshRememberedAuthHints()
+                if (res.isSuccess) {
+                    _loginLockoutSeconds.value = 0L
+                    _loginBannerMessage.value = null
+                    refreshNextOrderId()
+                    refreshHistory()
+                    onResult(true, null)
+                } else {
+                    val ex = res.exceptionOrNull()
+                    val lang = _language.value
+                    val posErr = (ex as? PosErrorException)?.posError
+                    val msg = when (posErr) {
+                        is PosError.AccountLocked -> {
+                            _loginLockoutSeconds.value = posErr.remainingSeconds.coerceAtLeast(1L)
+                            Localization.get(Localization.Key.LOCKOUT_DESC, lang)
+                        }
+                        is PosError.InvalidCredentials -> {
+                            _loginLockoutSeconds.value = 0L
+                            Localization.get(Localization.Key.LOGIN_ERR_INVALID_CREDENTIALS, lang)
+                        }
+                        is PosError.ValidationError -> {
+                            when {
+                                normalizedPhone.isBlank() -> Localization.get(Localization.Key.REG_ERR_PHONE_REQUIRED, lang)
+                                pass.isBlank() -> Localization.get(Localization.Key.REG_ERR_PASSWORD_REQUIRED, lang)
+                                else -> Localization.get(Localization.Key.LOGIN_ERR_GENERIC, lang)
+                            }
+                        }
+                        else -> Localization.get(Localization.Key.LOGIN_ERR_GENERIC, lang)
+                    }
+                    onResult(false, msg)
+                }
+            } finally {
+                _isLoggingIn.value = false
             }
         }
+    }
+
+    fun registerWithRecovery(
+        name: String,
+        phone: String,
+        address: String,
+        pass: String,
+        onResult: (Boolean, String?, String?) -> Unit
+    ) {
+        if (_isRegistering.value) return
+        _isRegistering.value = true
+
+        viewModelScope.launch {
+            try {
+                val normalizedPhone = AuthInputValidator.normalizePhone(phone)
+                val res = repository.registerOperatorWithRecovery(name, normalizedPhone, address, pass)
+                val count = repository.getOperatorCount()
+                _operatorCount.value = count
+                _hasRegisteredOperators.value = count > 0
+                refreshRememberedAuthHints()
+                if (res.isSuccess) {
+                    val reg = res.getOrNull()
+                    _pendingRecoveryCode.value = reg?.recoveryCode
+                    _pendingRecoveryOperatorName.value = reg?.operator?.operatorName
+                    _loginLockoutSeconds.value = 0L
+                    _loginBannerMessage.value = null
+                    refreshNextOrderId()
+                    refreshHistory()
+                    onResult(true, reg?.recoveryCode, null)
+                } else {
+                    val ex = res.exceptionOrNull()
+                    val lang = _language.value
+                    val errorMsg = when ((ex as? PosErrorException)?.posError) {
+                        is PosError.UserAlreadyExists -> Localization.get(Localization.Key.REG_ERR_DUPLICATE_PHONE, lang)
+                        is PosError.DatabaseError -> Localization.get(Localization.Key.REG_ERR_GENERIC, lang)
+                        else -> ex?.message ?: Localization.get(Localization.Key.REG_ERR_GENERIC, lang)
+                    }
+                    onResult(false, null, errorMsg)
+                }
+            } finally {
+                _isRegistering.value = false
+            }
+        }
+    }
+
+    fun acknowledgeRecoveryCode() {
+        _pendingRecoveryCode.value = null
+        _pendingRecoveryOperatorName.value = null
     }
 
     fun register(name: String, phone: String, address: String, pass: String, onResult: (Boolean, String?) -> Unit) {
+        registerWithRecovery(name, phone, address, pass) { success, _, err ->
+            onResult(success, err)
+        }
+    }
+
+    fun verifyRecoveryCode(
+        phone: String,
+        recoveryCode: String,
+        onResult: (Boolean, String?) -> Unit
+    ) {
+        if (_isVerifyingRecovery.value) return
+        _isVerifyingRecovery.value = true
+
         viewModelScope.launch {
-            val res = repository.registerOperator(name, phone, address, pass)
-            if (res.isSuccess) {
-                onResult(true, null)
-            } else {
-                onResult(false, res.exceptionOrNull()?.message ?: "Registration failed")
+            try {
+                val normalizedPhone = AuthInputValidator.normalizePhone(phone)
+                val lang = _language.value
+                val res = repository.verifyRecoveryCode(normalizedPhone, recoveryCode)
+                if (res.isSuccess) {
+                    onResult(true, null)
+                } else {
+                    val posErr = (res.exceptionOrNull() as? PosErrorException)?.posError
+                    val msg = when (posErr) {
+                        is PosError.ValidationError -> {
+                            when {
+                                normalizedPhone.isBlank() -> Localization.get(Localization.Key.REG_ERR_PHONE_REQUIRED, lang)
+                                recoveryCode.isBlank() -> Localization.get(Localization.Key.RECOVERY_ERR_CODE_REQUIRED, lang)
+                                else -> Localization.get(Localization.Key.RECOVERY_ERR_INVALID_OR_UNAVAILABLE, lang)
+                            }
+                        }
+                        // Unify RecordNotFound, RecoveryNotConfigured, InvalidRecoveryCode to avoid enumerating phone numbers
+                        else -> Localization.get(Localization.Key.RECOVERY_ERR_INVALID_OR_UNAVAILABLE, lang)
+                    }
+                    onResult(false, msg)
+                }
+            } finally {
+                _isVerifyingRecovery.value = false
             }
         }
     }
 
+    fun resetPassword(
+        phone: String,
+        recoveryCode: String,
+        newPass: String,
+        onResult: (Boolean, String?) -> Unit
+    ) {
+        if (_isResettingPassword.value) return
+        _isResettingPassword.value = true
+
+        viewModelScope.launch {
+            try {
+                val normalizedPhone = AuthInputValidator.normalizePhone(phone)
+                val lang = _language.value
+                val res = repository.resetPassword(normalizedPhone, recoveryCode, newPass)
+                refreshRememberedAuthHints()
+                if (res.isSuccess) {
+                    _loginLockoutSeconds.value = 0L
+                    _loginBannerMessage.value = Localization.get(Localization.Key.RECOVERY_PASSWORD_UPDATED_SUCCESS, lang)
+                    onResult(true, null)
+                } else {
+                    val posErr = (res.exceptionOrNull() as? PosErrorException)?.posError
+                    val msg = when (posErr) {
+                        is PosError.ValidationError -> {
+                            when {
+                                newPass.isBlank() -> Localization.get(Localization.Key.REG_ERR_PASSWORD_REQUIRED, lang)
+                                newPass.length < AuthInputValidator.MIN_PASSWORD_LENGTH ->
+                                    Localization.get(Localization.Key.REG_ERR_PASSWORD_MIN, lang)
+                                else -> Localization.get(Localization.Key.REG_ERR_PASSWORD_MAX, lang)
+                            }
+                        }
+                        else -> Localization.get(Localization.Key.RECOVERY_ERR_INVALID_OR_UNAVAILABLE, lang)
+                    }
+                    onResult(false, msg)
+                }
+            } finally {
+                _isResettingPassword.value = false
+            }
+        }
+    }
+
+    /**
+     * Compile-compatible legacy overload for untouched UI screens in Step 07B.
+     * Unauthenticated password reset without recovery code verification is strictly rejected.
+     */
     fun resetPassword(phone: String, pass: String, onResult: (Boolean, String?) -> Unit) {
+        onResult(false, "Recovery code verification is required to reset password.")
+    }
+
+    fun clearManagedRecoveryCode() {
+        _managedRecoveryCode.value = null
+    }
+
+    fun regenerateRecoveryCode(onResult: (Boolean, String?, String?) -> Unit) {
+        if (_isRegeneratingRecoveryCode.value) return
+        val lang = _language.value
+        val current = activeOperator.value
+        if (current == null) {
+            onResult(false, null, Localization.get(Localization.Key.RECOVERY_ERR_REGEN_FAILED, lang))
+            return
+        }
+        _isRegeneratingRecoveryCode.value = true
         viewModelScope.launch {
-            val res = repository.resetPassword(phone, pass)
-            if (res.isSuccess) {
-                onResult(true, null)
-            } else {
-                onResult(false, res.exceptionOrNull()?.message ?: "Reset failed")
+            try {
+                val activeOp = activeOperator.value ?: repository.getActiveOperator()
+                if (activeOp == null) {
+                    onResult(false, null, Localization.get(Localization.Key.RECOVERY_ERR_REGEN_FAILED, lang))
+                    return@launch
+                }
+                val res = repository.regenerateRecoveryCode(activeOp.userId)
+                if (res.isSuccess) {
+                    val code = res.getOrNull()
+                    if (!code.isNullOrBlank()) {
+                        _managedRecoveryCode.value = code
+                        onResult(true, code, null)
+                    } else {
+                        onResult(false, null, Localization.get(Localization.Key.RECOVERY_ERR_REGEN_FAILED, lang))
+                    }
+                } else {
+                    onResult(false, null, Localization.get(Localization.Key.RECOVERY_ERR_REGEN_FAILED, lang))
+                }
+            } catch (_: Exception) {
+                onResult(false, null, Localization.get(Localization.Key.RECOVERY_ERR_REGEN_FAILED, lang))
+            } finally {
+                _isRegeneratingRecoveryCode.value = false
             }
         }
     }
 
-    fun logout() {
+    fun logout(onComplete: (() -> Unit)? = null) {
+        // Immediately wipe in-memory draft, customer, recovery, and receipt preview state
+        _draftItems.value = emptyList()
+        _customerInfo.value = ""
+        _customerInfoError.value = null
+        _customerSuggestions.value = emptyList()
+        _draftPaidAmountBdt.value = ""
+        _isReceiptPopupOpen.value = false
+        _receiptPreviewOpen.value = false
+        _selectedInvoiceForReceipt.value = null
+        _receiptPopupLines.value = emptyList()
+        _receiptPreviewText.value = ""
+        _navigateHomeAfterPreview.value = false
+        _closeDetailsOnPrintSuccess.value = false
+        _invoiceToEdit.value = null
+        _invoiceToDelete.value = null
+        _importSummary.value = null
+        _pendingRecoveryCode.value = null
+        _pendingRecoveryOperatorName.value = null
+        _managedRecoveryCode.value = null
+        _isRegistering.value = false
+        _isLoggingIn.value = false
+        _isVerifyingRecovery.value = false
+        _isResettingPassword.value = false
+        _isRegeneratingRecoveryCode.value = false
+        _loginLockoutSeconds.value = 0L
+        _loginBannerMessage.value = null
+        _historyQuery.value = ""
+        _historyOrderIdFilter.value = ""
+        _historyCustomerFilter.value = ""
+        _orderIdSuggestions.value = emptyList()
+        _dateFilter.value = DateFilterMode.ALL
+        _customStartDate.value = null
+        _customEndDate.value = null
+        _historySortOption.value = HistorySortOption.DATE_DESC
+        _currentPage.value = 0
+        _expandedOrderId.value = null
+        _expandedLines.value = emptyList()
+        _orderLinesCache.value = emptyMap()
+        _exportDateRange.value = null
+        _analyticsGrouping.value = AnalyticsGrouping.DAY
+        _analyticsMetric.value = AnalyticsMetric.ROUNDED_SALES
+        resetAuditFilters()
+
         viewModelScope.launch {
-            repository.logout()
+            try {
+                repository.logout()
+                val count = repository.getOperatorCount()
+                _operatorCount.value = count
+                _hasRegisteredOperators.value = count > 0
+                refreshRememberedAuthHints()
+                if (cachedRememberedPhone.isNotBlank()) {
+                    _loginLockoutSeconds.value = runCatching {
+                        repository.getLockoutRemainingSeconds(cachedRememberedPhone)
+                    }.getOrDefault(0L)
+                }
+            } finally {
+                onComplete?.invoke()
+            }
         }
     }
 

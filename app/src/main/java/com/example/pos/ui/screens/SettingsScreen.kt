@@ -8,6 +8,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothConnected
@@ -41,19 +43,25 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Landscape
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -81,6 +89,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.SelectableDates
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDatePickerState
 import com.example.pos.core.util.DateTimeUtils
 import java.util.TimeZone
@@ -93,6 +102,7 @@ import com.example.pos.printer.BluetoothPrinterManager
 import com.example.pos.printer.PrinterConnectionState
 import com.example.pos.printer.ThermalReceiptFormatter
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -105,6 +115,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -114,6 +125,15 @@ import com.example.pos.ui.components.CompanyLogoView
 import com.example.pos.ui.components.ImportSummaryDialog
 import com.example.pos.ui.components.TopStationHeader
 import com.example.pos.ui.viewmodel.PosViewModel
+import com.example.ui.theme.PosBorderGreen
+import com.example.ui.theme.PosBorderNeutral
+import com.example.ui.theme.PosCharcoalText
+import com.example.ui.theme.PosCleanWhite
+import com.example.ui.theme.PosDeepGreen
+import com.example.ui.theme.PosDueRed
+import com.example.ui.theme.PosLightGreen
+import com.example.ui.theme.PosMintGreen
+import com.example.ui.theme.PosMutedText
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -122,7 +142,8 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(
     viewModel: PosViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onRequestLogout: (() -> Unit)? = null
 ) {
     val language by viewModel.language.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
@@ -145,6 +166,8 @@ fun SettingsScreen(
     val importSummary by viewModel.importSummary.collectAsState()
     val isImporting by viewModel.isImporting.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
+    val isRegeneratingRecoveryCode by viewModel.isRegeneratingRecoveryCode.collectAsState()
+    val managedRecoveryCode by viewModel.managedRecoveryCode.collectAsState()
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -170,7 +193,8 @@ fun SettingsScreen(
         Localization.get(Localization.Key.TAB_USER_PROFILE, language),
         Localization.get(Localization.Key.TAB_FOOTER_NOTE, language),
         Localization.get(Localization.Key.TAB_PRINTER, language),
-        Localization.get(Localization.Key.TAB_DATABASE_STATUS, language)
+        Localization.get(Localization.Key.TAB_DATABASE_STATUS, language),
+        Localization.get(Localization.Key.TAB_EMPLOYEE_ACTIVITY, language)
     )
 
     Column(
@@ -189,10 +213,11 @@ fun SettingsScreen(
             },
             onToggleTheme = {
                 viewModel.setThemeMode(if (themeMode == "DARK") "LIGHT" else "DARK")
-            }
+            },
+            onLogoutClick = onRequestLogout
         )
 
-        // 5 Tabs: Company Header, Operator Profile, Footer Note, Printer Settings, Database Capacity & Storage
+        // 6 Tabs: Company Header, Operator Profile, Footer Note, Printer Settings, Database Status, Employee Activity History
         ScrollableTabRow(
             selectedTabIndex = selectedTabIndex,
             edgePadding = 12.dp,
@@ -202,6 +227,7 @@ fun SettingsScreen(
                 Tab(
                     selected = selectedTabIndex == index,
                     onClick = { selectedTabIndex = index },
+                    modifier = Modifier.testTag("settings_tab_$index"),
                     text = {
                         Text(
                             text = title,
@@ -213,114 +239,136 @@ fun SettingsScreen(
             }
         }
 
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .weight(1f)
-                .padding(16.dp),
-            contentPadding = PaddingValues(bottom = 24.dp)
-        ) {
-            when (selectedTabIndex) {
-                0 -> item {
-                    CompanyHeaderSettingsTab(
-                        company = companyHeader,
-                        language = language,
-                        onSave = { name, branch, num, phone, address ->
-                            viewModel.updateCompanyHeader(name, branch, num, phone, address)
-                        },
-                        onSelectLogoUri = { uri -> viewModel.setCompanyLogoUri(uri) },
-                        onUseOfficialLogo = { viewModel.useOfficialDefaultLogo() },
-                        onRemoveLogo = { viewModel.removeCompanyLogo() }
-                    )
-                }
-                1 -> item {
-                    UserProfileSettingsTab(
-                        operator = activeOperator,
-                        language = language,
-                        onSave = { name, phone, address ->
-                            viewModel.updateOperatorProfile(name, phone, address)
-                        },
-                        onLogout = { viewModel.logout() }
-                    )
-                }
-                2 -> item {
-                    FooterNoteSettingsTab(
-                        line1 = appSettings?.footerNoteLine1 ?: "",
-                        line2 = appSettings?.footerNoteLine2 ?: "",
-                        language = language,
-                        onSave = { l1, l2 -> viewModel.updateFooterNotes(l1, l2) }
-                    )
-                }
-                3 -> item {
-                    PrinterSettingsTab(
-                        paperSize = appSettings?.paperSize ?: "58mm",
-                        autoCutter = appSettings?.autoCutterEnabled ?: true,
-                        selectedAddress = appSettings?.bluetoothPrinterAddress,
-                        selectedName = appSettings?.bluetoothPrinterName,
-                        connectionState = printerConnectionState,
-                        pairedDevices = pairedPrinterDevices,
-                        discoveredDevices = discoveredPrinterDevices,
-                        isScanning = isBluetoothScanning,
-                        isBluetoothEnabled = viewModel.isBluetoothEnabled,
-                        language = language,
-                        onSelectPaperSize = { viewModel.setPaperSize(it) },
-                        onToggleAutoCutter = { viewModel.setAutoCutter(it) },
-                        onSelectPrinter = { addr, name -> viewModel.setBluetoothPrinter(addr, name) },
-                        onConnectPrinter = { addr, name -> viewModel.connectPrinter(addr, name) },
-                        onDisconnectPrinter = { viewModel.disconnectPrinter() },
-                        onStartScan = { viewModel.startBluetoothScanning() },
-                        onStopScan = { viewModel.stopBluetoothScanning() },
-                        onRefreshPrinters = { viewModel.refreshPairedPrinters() },
-                        onTestPrint = { viewModel.testPrint() },
-                        companyHeader = companyHeader
-                    )
-                }
-                4 -> item {
-                    DatabaseStatusSettingsTab(
-                        totalInvoices = totalInvoiceCount,
-                        totalLines = totalInvoiceLinesCount,
-                        totalProducts = totalProductCount,
-                        totalCustomers = totalCustomerCount,
-                        databaseSizeBytes = databaseSizeBytes,
-                        supportedCapacity = supportedCapacity,
-                        language = language,
-                        isExporting = isExporting,
-                        isImporting = isImporting,
-                        onRefreshSize = { viewModel.refreshDatabaseSize() },
-                        onExportExcelFile = { range ->
-                            viewModel.setExportDateRange(range)
-                            val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
-                            exportLauncher.launch("POS_Sales_Export_$timeStamp.xlsx")
-                        },
-                        onImportExcel = {
-                            importLauncher.launch(
-                                arrayOf(
-                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    "application/octet-stream",
-                                    "*/*"
-                                )
-                            )
-                        },
-                        onBackupExcel = { range ->
-                            viewModel.exportSalesToExcel(customRange = range) { file ->
-                                try {
-                                    val uri = FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.provider",
-                                        file
-                                    )
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (selectedTabIndex == 5) {
+            EmployeeActivityScreen(
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+                    .padding(16.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                when (selectedTabIndex) {
+                    0 -> item {
+                        CompanyHeaderSettingsTab(
+                            company = companyHeader,
+                            language = language,
+                            onSave = { name, branch, num, phone, address ->
+                                viewModel.updateCompanyHeader(name, branch, num, phone, address)
+                            },
+                            onSelectLogoUri = { uri -> viewModel.setCompanyLogoUri(uri) },
+                            onUseOfficialLogo = { viewModel.useOfficialDefaultLogo() },
+                            onRemoveLogo = { viewModel.removeCompanyLogo() }
+                        )
+                    }
+                    1 -> item {
+                        UserProfileSettingsTab(
+                            operator = activeOperator,
+                            language = language,
+                            isRegeneratingRecoveryCode = isRegeneratingRecoveryCode,
+                            managedRecoveryCode = managedRecoveryCode,
+                            onSave = { name, phone, address ->
+                                viewModel.updateOperatorProfile(name, phone, address)
+                            },
+                            onRegenerateRecoveryCode = { onError ->
+                                viewModel.regenerateRecoveryCode { ok, _, err ->
+                                    if (!ok) {
+                                        onError(err)
                                     }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Backup Sales Report"))
-                                } catch (e: Exception) {
-                                    // Fallback if share chooser encounters any issue
+                                }
+                            },
+                            onAcknowledgeRecoveryCode = {
+                                viewModel.clearManagedRecoveryCode()
+                            },
+                            onLogout = { viewModel.logout() },
+                            onRequestSharedLogout = onRequestLogout
+                        )
+                    }
+                    2 -> item {
+                        FooterNoteSettingsTab(
+                            line1 = appSettings?.footerNoteLine1 ?: "",
+                            line2 = appSettings?.footerNoteLine2 ?: "",
+                            language = language,
+                            onSave = { l1, l2 -> viewModel.updateFooterNotes(l1, l2) }
+                        )
+                    }
+                    3 -> item {
+                        PrinterSettingsTab(
+                            paperSize = appSettings?.paperSize ?: "58mm",
+                            autoCutter = appSettings?.autoCutterEnabled ?: true,
+                            selectedAddress = appSettings?.bluetoothPrinterAddress,
+                            selectedName = appSettings?.bluetoothPrinterName,
+                            connectionState = printerConnectionState,
+                            pairedDevices = pairedPrinterDevices,
+                            discoveredDevices = discoveredPrinterDevices,
+                            isScanning = isBluetoothScanning,
+                            isBluetoothEnabled = viewModel.isBluetoothEnabled,
+                            language = language,
+                            onSelectPaperSize = { viewModel.setPaperSize(it) },
+                            onToggleAutoCutter = { viewModel.setAutoCutter(it) },
+                            onSelectPrinter = { addr, name -> viewModel.setBluetoothPrinter(addr, name) },
+                            onConnectPrinter = { addr, name -> viewModel.connectPrinter(addr, name) },
+                            onDisconnectPrinter = { viewModel.disconnectPrinter() },
+                            onStartScan = { viewModel.startBluetoothScanning() },
+                            onStopScan = { viewModel.stopBluetoothScanning() },
+                            onRefreshPrinters = { viewModel.refreshPairedPrinters() },
+                            onTestPrint = { viewModel.testPrint() },
+                            companyHeader = companyHeader
+                        )
+                    }
+                    4 -> item {
+                        DatabaseStatusSettingsTab(
+                            totalInvoices = totalInvoiceCount,
+                            totalLines = totalInvoiceLinesCount,
+                            totalProducts = totalProductCount,
+                            totalCustomers = totalCustomerCount,
+                            databaseSizeBytes = databaseSizeBytes,
+                            supportedCapacity = supportedCapacity,
+                            language = language,
+                            isExporting = isExporting,
+                            isImporting = isImporting,
+                            onRefreshSize = { viewModel.refreshDatabaseSize() },
+                            onExportExcelFile = { range ->
+                                viewModel.setExportDateRange(range)
+                                val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                                exportLauncher.launch("POS_Sales_Export_$timeStamp.xlsx")
+                            },
+                            onImportExcel = {
+                                importLauncher.launch(
+                                    arrayOf(
+                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        "application/octet-stream",
+                                        "*/*"
+                                    )
+                                )
+                            },
+                            onBackupExcel = { range ->
+                                viewModel.exportSalesToExcel(customRange = range) { file ->
+                                    try {
+                                        val uri = FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.provider",
+                                            file
+                                        )
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(shareIntent, "Backup Sales Report"))
+                                    } catch (e: Exception) {
+                                        // Fallback if share chooser encounters any issue
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -610,97 +658,457 @@ fun CompanyHeaderSettingsTab(
 fun UserProfileSettingsTab(
     operator: com.example.pos.data.db.OperatorEntity?,
     language: String,
+    isRegeneratingRecoveryCode: Boolean = false,
+    managedRecoveryCode: String? = null,
     onSave: (name: String, phone: String, address: String) -> Unit,
-    onLogout: () -> Unit
+    onRegenerateRecoveryCode: ((String?) -> Unit) -> Unit = {},
+    onAcknowledgeRecoveryCode: () -> Unit = {},
+    onLogout: () -> Unit,
+    onRequestSharedLogout: (() -> Unit)? = null
 ) {
     var name by remember(operator) { mutableStateOf(operator?.operatorName ?: "") }
     var phone by remember(operator) { mutableStateOf(operator?.operatorPhone ?: "") }
     var address by remember(operator) { mutableStateOf(operator?.operatorAddress ?: "") }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = Localization.get(Localization.Key.TAB_USER_PROFILE, language),
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    modifier = Modifier.weight(1f)
-                )
-                if (operator != null) {
+    var showRecoveryMgmtDialog by remember { mutableStateOf(false) }
+    var recoveryRegenError by remember { mutableStateOf<String?>(null) }
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(operator == null) {
+        if (operator == null) {
+            showRecoveryMgmtDialog = false
+            showLogoutConfirmDialog = false
+            recoveryRegenError = null
+            onAcknowledgeRecoveryCode()
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        // 1. Account Information Summary Card (Strictly Non-Sensitive Metadata)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("settings_account_info_card"),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = PosCleanWhite),
+            border = BorderStroke(1.dp, PosBorderGreen),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VerifiedUser,
+                        contentDescription = null,
+                        tint = PosDeepGreen
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = Localization.get(Localization.Key.SETTINGS_ACCOUNT_INFO_TITLE, language),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = PosCharcoalText,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (operator != null) {
+                        Surface(
+                            color = PosMintGreen,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, PosBorderGreen),
+                            modifier = Modifier
+                                .semantics(mergeDescendants = true) {}
+                                .testTag("account_info_operator_id")
+                        ) {
+                            Text(
+                                text = operator.userId,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = PosDeepGreen,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = PosBorderNeutral)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Account Status Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = Localization.get(Localization.Key.SETTINGS_ACCOUNT_STATUS_LABEL, language),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = PosMutedText
+                    )
                     Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(999.dp),
+                        color = PosLightGreen,
+                        border = BorderStroke(1.dp, PosBorderGreen),
+                        modifier = Modifier
+                            .semantics(mergeDescendants = true) {}
+                            .testTag("account_info_status")
                     ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = PosDeepGreen,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = Localization.get(Localization.Key.SETTINGS_ACCOUNT_STATUS_ACTIVE, language),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = PosDeepGreen
+                            )
+                        }
+                    }
+                }
+
+                if (operator != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Operator Name
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            tint = PosMutedText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = Localization.get(Localization.Key.FULL_NAME, language),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PosMutedText
+                            )
+                            Text(
+                                text = operator.operatorName,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = PosCharcoalText,
+                                modifier = Modifier.testTag("account_info_name")
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Registered Mobile Number
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = PosMutedText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = Localization.get(Localization.Key.PHONE_NUMBER, language),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PosMutedText
+                            )
+                            Text(
+                                text = operator.operatorPhone,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = PosCharcoalText,
+                                modifier = Modifier.testTag("account_info_phone")
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Business Address / Branch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = null,
+                            tint = PosMutedText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = Localization.get(Localization.Key.ADDRESS, language),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PosMutedText
+                            )
+                            Text(
+                                text = operator.operatorAddress.ifBlank {
+                                    Localization.get(Localization.Key.NOT_PROVIDED, language)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = PosCharcoalText,
+                                modifier = Modifier.testTag("account_info_address")
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Shared Business Data Transparency Strip
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("account_shared_data_notice"),
+                    shape = RoundedCornerShape(10.dp),
+                    color = PosMintGreen,
+                    border = BorderStroke(1.dp, PosBorderGreen)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = PosDeepGreen,
+                            modifier = Modifier
+                                .padding(top = 1.dp)
+                                .size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = operator.userId,
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            text = Localization.get(Localization.Key.SETTINGS_SHARED_DATA_NOTICE, language),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PosCharcoalText
                         )
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
+        // 2. Account Security & Recovery Code Management Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("settings_recovery_mgmt_card"),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = PosCleanWhite),
+            border = BorderStroke(1.dp, PosBorderGreen),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = PosDeepGreen
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = Localization.get(Localization.Key.SETTINGS_RECOVERY_MGMT_TITLE, language),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = PosCharcoalText
+                    )
+                }
 
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(Localization.get(Localization.Key.FULL_NAME, language), fontSize = 12.sp) },
-                modifier = Modifier.fillMaxWidth()
-            )
+                Spacer(modifier = Modifier.height(6.dp))
 
-            Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = Localization.get(Localization.Key.SETTINGS_RECOVERY_MGMT_DESC, language),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = PosMutedText
+                )
 
-            OutlinedTextField(
-                value = phone,
-                onValueChange = { phone = it },
-                label = { Text(Localization.get(Localization.Key.PHONE_NUMBER, language), fontSize = 12.sp) },
-                modifier = Modifier.fillMaxWidth()
-            )
+                Spacer(modifier = Modifier.height(12.dp))
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            OutlinedTextField(
-                value = address,
-                onValueChange = { address = it },
-                label = { Text(Localization.get(Localization.Key.ADDRESS, language), fontSize = 12.sp) },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = { onSave(name, phone, address) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(Localization.get(Localization.Key.BTN_SAVE, language))
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedButton(
-                onClick = onLogout,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(Localization.get(Localization.Key.LOGOUT, language))
+                OutlinedButton(
+                    onClick = {
+                        recoveryRegenError = null
+                        showRecoveryMgmtDialog = true
+                    },
+                    enabled = operator != null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .testTag("btn_manage_recovery_code"),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, PosDeepGreen),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = PosMintGreen,
+                        contentColor = PosDeepGreen
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = Localization.get(Localization.Key.BTN_MANAGE_RECOVERY_CODE, language),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
             }
         }
+
+        // 3. Editable Operator Profile Details + Logout
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("settings_edit_profile_card"),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = PosCleanWhite),
+            border = BorderStroke(1.dp, PosBorderGreen),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, tint = PosDeepGreen)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = Localization.get(Localization.Key.SETTINGS_EDIT_PROFILE_TITLE, language),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = PosCharcoalText,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(Localization.get(Localization.Key.FULL_NAME, language), fontSize = 12.sp) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_name_input")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text(Localization.get(Localization.Key.PHONE_NUMBER, language), fontSize = 12.sp) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_phone_input")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    label = { Text(Localization.get(Localization.Key.ADDRESS, language), fontSize = 12.sp) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_address_input")
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = { onSave(name, phone, address) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .testTag("btn_save_profile"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PosDeepGreen,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(Localization.get(Localization.Key.BTN_SAVE, language))
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        if (onRequestSharedLogout != null) {
+                            onRequestSharedLogout()
+                        } else {
+                            showLogoutConfirmDialog = true
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .testTag("btn_settings_logout"),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, PosDueRed.copy(alpha = 0.5f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PosDueRed)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(Localization.get(Localization.Key.LOGOUT, language))
+                }
+            }
+        }
+    }
+
+    if (showRecoveryMgmtDialog) {
+        RecoveryCodeManagementDialog(
+            operator = operator,
+            language = language,
+            generatedRecoveryCode = managedRecoveryCode,
+            isRegenerating = isRegeneratingRecoveryCode,
+            errorMessage = recoveryRegenError,
+            onClearError = { recoveryRegenError = null },
+            onRequestRegenerate = {
+                onRegenerateRecoveryCode { err ->
+                    recoveryRegenError = err
+                }
+            },
+            onAcknowledgeAndClose = {
+                onAcknowledgeRecoveryCode()
+                recoveryRegenError = null
+                showRecoveryMgmtDialog = false
+            },
+            onDismissBeforeRegeneration = {
+                onAcknowledgeRecoveryCode()
+                recoveryRegenError = null
+                showRecoveryMgmtDialog = false
+            }
+        )
+    }
+
+    if (showLogoutConfirmDialog && onRequestSharedLogout == null) {
+        LogoutConfirmationDialog(
+            operatorName = operator?.operatorName,
+            language = language,
+            onDismiss = { showLogoutConfirmDialog = false },
+            onConfirmLogout = {
+                showLogoutConfirmDialog = false
+                showRecoveryMgmtDialog = false
+                onAcknowledgeRecoveryCode()
+                onLogout()
+            }
+        )
     }
 }
 

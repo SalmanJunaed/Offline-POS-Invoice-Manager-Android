@@ -25,12 +25,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -112,7 +111,8 @@ import com.example.pos.ui.viewmodel.PosViewModel
 fun InvoiceScreen(
     viewModel: PosViewModel,
     modifier: Modifier = Modifier,
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    onRequestLogout: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val language by viewModel.language.collectAsState()
@@ -168,7 +168,8 @@ fun InvoiceScreen(
             },
             onToggleTheme = {
                 viewModel.setThemeMode(if (themeMode == "DARK") "LIGHT" else "DARK")
-            }
+            },
+            onLogoutClick = onRequestLogout
         )
 
         // Sub-header navigation row with Back Button to Sales Home
@@ -391,7 +392,7 @@ fun CatalogPane(
     val filteredProducts = remember(products, searchQuery, selectedFilter) {
         products.filter { p ->
             val matchesFilter = when (selectedFilter) {
-                "LIQUID" -> p.itemType.equals("Liquid", ignoreCase = true)
+                "LIQUID" -> FinancialCalculationEngine.isLiquidOrFuelType(p.itemType)
                 "PRODUCT" -> p.itemType.equals("Product", ignoreCase = true)
                 "SERVICE" -> p.itemType.equals("Service", ignoreCase = true)
                 else -> true
@@ -491,7 +492,7 @@ fun CatalogPane(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // Catalog Product Cards in a responsive Grid
+        // Catalog Product Cards in a compact Single-Column List
         if (filteredProducts.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -506,10 +507,8 @@ fun CatalogPane(
                 )
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 130.dp),
+            LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(bottom = 6.dp)
             ) {
@@ -517,6 +516,7 @@ fun CatalogPane(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
                             .clickable { onSelectProduct(product) }
                             .testTag("catalog_item_${product.itemId}"),
                         shape = RoundedCornerShape(8.dp),
@@ -525,40 +525,45 @@ fun CatalogPane(
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(8.dp)
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = product.getDisplayName(language),
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp)
                             ) {
+                                Text(
+                                    text = product.getDisplayName(language),
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     ItemTypeBadge(product.itemType)
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = product.unit,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Text(
-                                    text = "${FinancialCalculationEngine.formatPaisaToBdt(product.defaultUnitPricePaisa)} ৳",
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                )
                             }
+                            Text(
+                                text = "${FinancialCalculationEngine.formatPaisaToBdt(product.defaultUnitPricePaisa)} ৳",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                ),
+                                maxLines = 1
+                            )
                         }
                     }
                 }
@@ -786,6 +791,7 @@ fun CartPane(
                         totalItems = draftItems.size,
                         onQuantityChanged = { newQty -> viewModel.updateItemQuantity(item.tempId, newQty) },
                         onPriceChanged = { newPrice -> viewModel.updateItemUnitPrice(item.tempId, newPrice) },
+                        onTotalChanged = { newTotal -> viewModel.updateItemTotalAmount(item.tempId, newTotal) },
                         onMoveUp = { if (index > 0) viewModel.moveItem(index, index - 1) },
                         onMoveDown = { if (index < draftItems.size - 1) viewModel.moveItem(index, index + 1) },
                         onRemove = { viewModel.removeItem(item.tempId) }
@@ -1168,8 +1174,15 @@ fun PosInlineEditableCell(
     BasicTextField(
         value = textFieldValue,
         onValueChange = { incoming ->
+            if (incoming.text == textFieldValue.text) {
+                textFieldValue = incoming
+                return@BasicTextField
+            }
             val oldText = value
-            val resolvedText = if (shouldReplaceOnInput && oldText.isNotEmpty()) {
+            val wasAllSelected = !textFieldValue.selection.collapsed &&
+                textFieldValue.selection.min == 0 &&
+                textFieldValue.selection.max == oldText.length
+            val resolvedText = if (shouldReplaceOnInput && !wasAllSelected && oldText.isNotEmpty()) {
                 when {
                     // Typed before existing text (e.g. cursor at 0, operator typed "120" before "130" -> "120130")
                     incoming.text.endsWith(oldText) && incoming.text.length > oldText.length -> {
@@ -1186,8 +1199,15 @@ fun PosInlineEditableCell(
             }
 
             shouldReplaceOnInput = false
-            textFieldValue = TextFieldValue(text = resolvedText, selection = TextRange(resolvedText.length))
-            onValueChange(resolvedText)
+            val newSelection = if (resolvedText == incoming.text) {
+                incoming.selection
+            } else {
+                TextRange(resolvedText.length)
+            }
+            textFieldValue = incoming.copy(text = resolvedText, selection = newSelection)
+            if (resolvedText != value) {
+                onValueChange(resolvedText)
+            }
         },
         modifier = modifier
             .testTag(testTag)
@@ -1203,6 +1223,7 @@ fun PosInlineEditableCell(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         textStyle = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 13.sp,
             textAlign = textAlign,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
@@ -1212,7 +1233,7 @@ fun PosInlineEditableCell(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(38.dp)
+                    .height(40.dp)
                     .background(
                         color = if (isFocused) MaterialTheme.colorScheme.surface
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
@@ -1224,7 +1245,7 @@ fun PosInlineEditableCell(
                         else MaterialTheme.colorScheme.outlineVariant,
                         shape = RoundedCornerShape(6.dp)
                     )
-                    .padding(horizontal = 6.dp),
+                    .padding(horizontal = 4.dp),
                 contentAlignment = when (textAlign) {
                     TextAlign.End -> Alignment.CenterEnd
                     TextAlign.Start -> Alignment.CenterStart
@@ -1244,10 +1265,13 @@ fun InvoiceItemRow(
     totalItems: Int,
     onQuantityChanged: (String) -> Unit,
     onPriceChanged: (String) -> Unit,
+    onTotalChanged: (String) -> Unit = {},
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onRemove: () -> Unit
 ) {
+    val isLiquidItem = FinancialCalculationEngine.isLiquidOrFuelType(item.itemType)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1307,7 +1331,9 @@ fun InvoiceItemRow(
                     Text(
                         text = item.unit,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -1334,18 +1360,33 @@ fun InvoiceItemRow(
                 testTag = "price_input_${item.itemId}"
             )
 
-            // Dynamic Total
-            Text(
-                text = FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa),
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 4.dp),
-                textAlign = TextAlign.End,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+            // Total Amount: editable for Liquid/Fuel (bidirectional), read-only for Product/Service
+            if (isLiquidItem) {
+                PosInlineEditableCell(
+                    value = item.lineTotalBdtStr,
+                    onValueChange = onTotalChanged,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 2.dp),
+                    textAlign = TextAlign.End,
+                    testTag = "total_input_${item.itemId}"
                 )
-            )
+            } else {
+                Text(
+                    text = FinancialCalculationEngine.formatPaisaToBdt(item.lineTotalPaisa),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 4.dp),
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
 
             // Delete Button (32dp + 4dp space = 36dp matching header)
             IconButton(
@@ -1379,7 +1420,7 @@ fun ProductPickerBottomSheet(
     val filteredProducts = remember(products, searchQuery, selectedFilter) {
         products.filter { p ->
             val matchesFilter = when (selectedFilter) {
-                "LIQUID" -> p.itemType.equals("Liquid", ignoreCase = true)
+                "LIQUID" -> FinancialCalculationEngine.isLiquidOrFuelType(p.itemType)
                 "PRODUCT" -> p.itemType.equals("Product", ignoreCase = true)
                 "SERVICE" -> p.itemType.equals("Service", ignoreCase = true)
                 else -> true

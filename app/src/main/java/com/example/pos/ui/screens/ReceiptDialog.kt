@@ -1693,12 +1693,37 @@ private fun parse58mmItemLines(rawItemLines: List<String>): List<VoucherItemTabl
 
 private fun parse80mmItemLines(rawItemLines: List<String>): List<VoucherItemTableRow> {
     val rows = mutableListOf<VoucherItemTableRow>()
+    val pendingNameLines = mutableListOf<String>()
 
-    for (line in rawItemLines) {
+    for (i in rawItemLines.indices) {
+        val line = rawItemLines[i]
         if (line.isBlank()) continue
+
+        val detailMatch = DETAIL_58MM_REGEX.matchEntire(line)
+        if (detailMatch != null) {
+            val fullName = if (pendingNameLines.isNotEmpty()) {
+                pendingNameLines.joinToString(" ") { it.trim() }
+            } else {
+                "Item"
+            }
+            pendingNameLines.clear()
+            val qtyUnitToken = detailMatch.groupValues[1].trim()
+            val parts = qtyUnitToken.split(Regex("\\s+"), limit = 2)
+            rows.add(
+                VoucherItemTableRow(
+                    itemName = fullName,
+                    qty = parts.getOrElse(0) { qtyUnitToken },
+                    unit = parts.getOrElse(1) { "" },
+                    rate = detailMatch.groupValues[2].trim(),
+                    total = detailMatch.groupValues[3].trim()
+                )
+            )
+            continue
+        }
 
         val match = ROW_80MM_REGEX.matchEntire(line)
         if (match != null) {
+            pendingNameLines.clear()
             rows.add(
                 VoucherItemTableRow(
                     itemName = match.groupValues[1].trim(),
@@ -1713,6 +1738,7 @@ private fun parse80mmItemLines(rawItemLines: List<String>): List<VoucherItemTabl
 
         val noUnitMatch = ROW_80MM_NO_UNIT_REGEX.matchEntire(line)
         if (noUnitMatch != null) {
+            pendingNameLines.clear()
             rows.add(
                 VoucherItemTableRow(
                     itemName = noUnitMatch.groupValues[1].trim(),
@@ -1725,7 +1751,21 @@ private fun parse80mmItemLines(rawItemLines: List<String>): List<VoucherItemTabl
             continue
         }
 
-        if (rows.isNotEmpty()) {
+        // Distinguish continuation of previous 5-column item name from header of upcoming 2-line fallback item
+        var upcomingDetailBeforeRow = false
+        for (j in (i + 1) until rawItemLines.size) {
+            val future = rawItemLines[j]
+            if (future.isBlank()) continue
+            if (DETAIL_58MM_REGEX.matches(future)) {
+                upcomingDetailBeforeRow = true
+                break
+            }
+            if (ROW_80MM_REGEX.matches(future) || ROW_80MM_NO_UNIT_REGEX.matches(future)) break
+        }
+
+        if (upcomingDetailBeforeRow || pendingNameLines.isNotEmpty()) {
+            pendingNameLines.add(line.trim())
+        } else if (rows.isNotEmpty()) {
             val lastIdx = rows.lastIndex
             val prev = rows[lastIdx]
             rows[lastIdx] = prev.copy(

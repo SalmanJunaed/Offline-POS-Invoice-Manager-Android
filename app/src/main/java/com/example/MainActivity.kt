@@ -37,6 +37,7 @@ import com.example.pos.data.Localization
 import com.example.pos.ui.screens.AuthScreen
 import com.example.pos.ui.screens.HistoryScreen
 import com.example.pos.ui.screens.InvoiceScreen
+import com.example.pos.ui.screens.LogoutConfirmationDialog
 import com.example.pos.ui.screens.ProductsScreen
 import com.example.pos.ui.screens.ReceiptPreviewDialog
 import com.example.pos.ui.screens.SettingsScreen
@@ -79,6 +80,8 @@ fun PosMainApp(viewModel: PosViewModel) {
     val isDraftFullPaid by viewModel.isDraftFullPaid.collectAsState()
 
     val isSessionChecking by viewModel.isSessionChecking.collectAsState()
+    val isRegistering by viewModel.isRegistering.collectAsState()
+    val pendingRecoveryCode by viewModel.pendingRecoveryCode.collectAsState()
     val navigateHomeAfterPreview by viewModel.navigateHomeAfterPreview.collectAsState()
     val selectedInvoiceForReceipt by viewModel.selectedInvoiceForReceipt.collectAsState()
 
@@ -100,17 +103,21 @@ fun PosMainApp(viewModel: PosViewModel) {
             isSessionChecking = isSessionChecking,
             onSplashFinished = { showSplash = false }
         )
-    } else if (activeOperator == null) {
-        // Operator Authentication Gate (Login / Register / Reset)
+    } else if (activeOperator == null || isRegistering || !pendingRecoveryCode.isNullOrBlank()) {
+        // Operator Authentication & First-Install Onboarding Gate (Registration / Recovery Confirmation / Login)
         AuthScreen(
             viewModel = viewModel,
             language = language,
             onLoginSuccess = {
                 currentNavIndex = 0
                 isNewInvoiceOpen = false
+                viewModel.refreshHistory()
             }
         )
     } else {
+        var showGlobalLogoutDialog by remember { mutableStateOf(false) }
+        val openGlobalLogoutDialog: () -> Unit = { showGlobalLogoutDialog = true }
+
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
@@ -155,19 +162,45 @@ fun PosMainApp(viewModel: PosViewModel) {
                 InvoiceScreen(
                     viewModel = viewModel,
                     modifier = screenModifier,
-                    onNavigateBack = { isNewInvoiceOpen = false }
+                    onNavigateBack = { isNewInvoiceOpen = false },
+                    onRequestLogout = openGlobalLogoutDialog
                 )
             } else {
                 when (currentNavIndex) {
                     0 -> HistoryScreen(
                         viewModel = viewModel,
                         modifier = screenModifier,
-                        onOpenNewInvoice = { isNewInvoiceOpen = true }
+                        onOpenNewInvoice = { isNewInvoiceOpen = true },
+                        onRequestLogout = openGlobalLogoutDialog
                     )
-                    1 -> ProductsScreen(viewModel = viewModel, modifier = screenModifier)
-                    2 -> SettingsScreen(viewModel = viewModel, modifier = screenModifier)
+                    1 -> ProductsScreen(
+                        viewModel = viewModel,
+                        modifier = screenModifier,
+                        onRequestLogout = openGlobalLogoutDialog
+                    )
+                    2 -> SettingsScreen(
+                        viewModel = viewModel,
+                        modifier = screenModifier,
+                        onRequestLogout = openGlobalLogoutDialog
+                    )
                 }
             }
+        }
+
+        if (showGlobalLogoutDialog) {
+            LogoutConfirmationDialog(
+                operatorName = activeOperator?.operatorName,
+                language = language,
+                onDismiss = { showGlobalLogoutDialog = false },
+                onConfirmLogout = {
+                    showGlobalLogoutDialog = false
+                    isNewInvoiceOpen = false
+                    currentNavIndex = 0
+                    viewModel.acknowledgeRecoveryCode()
+                    viewModel.clearManagedRecoveryCode()
+                    viewModel.logout()
+                }
+            )
         }
     }
 

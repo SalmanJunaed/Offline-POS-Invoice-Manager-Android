@@ -37,7 +37,16 @@ interface OperatorDao {
     @Query("SELECT * FROM operators ORDER BY created_at DESC")
     fun getAllOperators(): Flow<List<OperatorEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Query("SELECT * FROM operators ORDER BY created_at DESC")
+    suspend fun getAllOperatorsDirect(): List<OperatorEntity>
+
+    @Query("SELECT COUNT(*) FROM operators")
+    suspend fun getOperatorCount(): Int
+
+    @Query("SELECT COUNT(*) FROM operators")
+    fun getOperatorCountFlow(): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertOperator(operator: OperatorEntity)
 
     @Update
@@ -47,7 +56,57 @@ interface OperatorDao {
     suspend fun clearAllActiveOperators()
 
     @Query("UPDATE operators SET is_active = 1, remember_me = :rememberMe, updated_at = :now WHERE user_id = :userId")
-    suspend fun setActiveOperator(userId: String, rememberMe: Boolean, now: Long = System.currentTimeMillis())
+    suspend fun setActiveOperator(userId: String, rememberMe: Boolean, now: Long = System.currentTimeMillis()): Int
+
+    @Transaction
+    suspend fun switchActiveOperator(
+        userId: String,
+        rememberMe: Boolean,
+        now: Long = System.currentTimeMillis()
+    ): OperatorEntity? {
+        getOperatorById(userId) ?: return null
+        clearAllActiveOperators()
+        setActiveOperator(userId, rememberMe, now)
+        return getOperatorById(userId)
+    }
+
+    @Transaction
+    suspend fun insertAndActivateOperator(operator: OperatorEntity): OperatorEntity {
+        clearAllActiveOperators()
+        insertOperator(operator)
+        return getOperatorById(operator.userId) ?: operator
+    }
+
+    @Query("UPDATE operators SET password_hash = :passwordHash, failed_attempts = 0, locked_until_millis = 0, updated_at = :now WHERE user_id = :userId")
+    suspend fun updatePasswordHash(
+        userId: String,
+        passwordHash: String,
+        now: Long = System.currentTimeMillis()
+    ): Int
+
+    @Query("UPDATE operators SET recovery_code_hash = :recoveryCodeHash, updated_at = :now WHERE user_id = :userId")
+    suspend fun updateRecoveryCodeHash(
+        userId: String,
+        recoveryCodeHash: String,
+        now: Long = System.currentTimeMillis()
+    ): Int
+
+    @Query("UPDATE operators SET failed_attempts = :failedAttempts, locked_until_millis = :lockedUntilMillis, updated_at = :now WHERE user_id = :userId")
+    suspend fun updateLoginAttempts(
+        userId: String,
+        failedAttempts: Int,
+        lockedUntilMillis: Long,
+        now: Long = System.currentTimeMillis()
+    ): Int
+
+    @Query("UPDATE operators SET operator_name = :name, operator_phone = :phone, operator_address = :address, updated_at = :now WHERE user_id = :userId")
+    suspend fun updateOperatorProfile(
+        userId: String,
+        name: String,
+        phone: String,
+        address: String,
+        now: Long = System.currentTimeMillis()
+    ): Int
 }
 
 @Dao
@@ -582,11 +641,51 @@ interface InvoiceDao {
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
+    @Query(
+        """
+        UPDATE invoices
+        SET customer_info = :customerInfo,
+            footer_note = :footerNote,
+            updated_by_operator_id = :updatedByOperatorId,
+            updated_by_operator_name = :updatedByOperatorName,
+            updated_at = :updatedAt
+        WHERE order_id = :orderId
+        """
+    )
+    suspend fun updateInvoiceCustomerAndNoteWithOperator(
+        orderId: String,
+        customerInfo: String,
+        footerNote: String,
+        updatedByOperatorId: String?,
+        updatedByOperatorName: String?,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
     @Query("UPDATE invoices SET paid_amount_bdt = :newPaidBdt, is_paid = :isPaid, updated_at = :updatedAt WHERE order_id = :orderId")
     suspend fun updateInvoicePayment(
         orderId: String,
         newPaidBdt: Long,
         isPaid: Boolean,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
+
+    @Query(
+        """
+        UPDATE invoices
+        SET paid_amount_bdt = :newPaidBdt,
+            is_paid = :isPaid,
+            updated_by_operator_id = :updatedByOperatorId,
+            updated_by_operator_name = :updatedByOperatorName,
+            updated_at = :updatedAt
+        WHERE order_id = :orderId
+        """
+    )
+    suspend fun updateInvoicePaymentWithOperator(
+        orderId: String,
+        newPaidBdt: Long,
+        isPaid: Boolean,
+        updatedByOperatorId: String?,
+        updatedByOperatorName: String?,
         updatedAt: Long = System.currentTimeMillis()
     ): Int
 
@@ -600,7 +699,19 @@ interface InvoiceDao {
         val newPaid = invoice.paidAmountBdt + additionalPaymentBdt
         val isPaid = newPaid >= invoice.roundedTotalBdt
         insertPayment(paymentRecord)
-        updateInvoicePayment(orderId, newPaid, isPaid, System.currentTimeMillis())
+        val now = paymentRecord.timestamp
+        if (!paymentRecord.collectedByOperatorId.isNullOrBlank()) {
+            updateInvoicePaymentWithOperator(
+                orderId = orderId,
+                newPaidBdt = newPaid,
+                isPaid = isPaid,
+                updatedByOperatorId = paymentRecord.collectedByOperatorId,
+                updatedByOperatorName = paymentRecord.collectedByOperatorName,
+                updatedAt = now
+            )
+        } else {
+            updateInvoicePayment(orderId, newPaid, isPaid, now)
+        }
         return getInvoiceById(orderId)
     }
 
@@ -678,20 +789,70 @@ interface AppSettingsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(settings: AppSettingsEntity)
 
+    @Query("UPDATE app_settings SET language = :lang, updated_at = :now, updated_by_operator_id = :opId, updated_by_operator_name = :opName WHERE id = 1")
+    suspend fun updateLanguageWithOperator(
+        lang: String,
+        opId: String?,
+        opName: String?,
+        now: Long = System.currentTimeMillis()
+    )
+
     @Query("UPDATE app_settings SET language = :lang WHERE id = 1")
     suspend fun updateLanguage(lang: String)
+
+    @Query("UPDATE app_settings SET theme_mode = :themeMode, updated_at = :now, updated_by_operator_id = :opId, updated_by_operator_name = :opName WHERE id = 1")
+    suspend fun updateThemeModeWithOperator(
+        themeMode: String,
+        opId: String?,
+        opName: String?,
+        now: Long = System.currentTimeMillis()
+    )
 
     @Query("UPDATE app_settings SET theme_mode = :themeMode WHERE id = 1")
     suspend fun updateThemeMode(themeMode: String)
 
+    @Query("UPDATE app_settings SET paper_size = :paperSize, updated_at = :now, updated_by_operator_id = :opId, updated_by_operator_name = :opName WHERE id = 1")
+    suspend fun updatePaperSizeWithOperator(
+        paperSize: String,
+        opId: String?,
+        opName: String?,
+        now: Long = System.currentTimeMillis()
+    )
+
     @Query("UPDATE app_settings SET paper_size = :paperSize WHERE id = 1")
     suspend fun updatePaperSize(paperSize: String)
+
+    @Query("UPDATE app_settings SET auto_cutter_enabled = :enabled, updated_at = :now, updated_by_operator_id = :opId, updated_by_operator_name = :opName WHERE id = 1")
+    suspend fun updateAutoCutterWithOperator(
+        enabled: Boolean,
+        opId: String?,
+        opName: String?,
+        now: Long = System.currentTimeMillis()
+    )
 
     @Query("UPDATE app_settings SET auto_cutter_enabled = :enabled WHERE id = 1")
     suspend fun updateAutoCutter(enabled: Boolean)
 
+    @Query("UPDATE app_settings SET bluetooth_printer_address = :address, bluetooth_printer_name = :name, updated_at = :now, updated_by_operator_id = :opId, updated_by_operator_name = :opName WHERE id = 1")
+    suspend fun updateBluetoothPrinterWithOperator(
+        address: String?,
+        name: String?,
+        opId: String?,
+        opName: String?,
+        now: Long = System.currentTimeMillis()
+    )
+
     @Query("UPDATE app_settings SET bluetooth_printer_address = :address, bluetooth_printer_name = :name WHERE id = 1")
     suspend fun updateBluetoothPrinter(address: String?, name: String?)
+
+    @Query("UPDATE app_settings SET footer_note_line1 = :line1, footer_note_line2 = :line2, updated_at = :now, updated_by_operator_id = :opId, updated_by_operator_name = :opName WHERE id = 1")
+    suspend fun updateFooterNotesWithOperator(
+        line1: String,
+        line2: String,
+        opId: String?,
+        opName: String?,
+        now: Long = System.currentTimeMillis()
+    )
 
     @Query("UPDATE app_settings SET footer_note_line1 = :line1, footer_note_line2 = :line2 WHERE id = 1")
     suspend fun updateFooterNotes(line1: String, line2: String)
@@ -708,8 +869,11 @@ data class DailySalesSummary(
 
 @Dao
 interface PaymentDao {
-    @Query("SELECT * FROM payment_records WHERE order_id = :orderId")
+    @Query("SELECT * FROM payment_records WHERE order_id = :orderId ORDER BY timestamp ASC, id ASC")
     fun getPaymentsForOrder(orderId: String): Flow<List<PaymentRecordEntity>>
+
+    @Query("SELECT * FROM payment_records WHERE order_id = :orderId ORDER BY timestamp ASC, id ASC")
+    suspend fun getPaymentsForOrderDirect(orderId: String): List<PaymentRecordEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayment(payment: PaymentRecordEntity)
@@ -792,5 +956,104 @@ interface CustomerDao {
 
     @Query("SELECT COUNT(*) FROM customers")
     fun getCustomerCountFlow(): Flow<Int>
+}
+
+data class AuditOperatorOption(
+    val operatorId: String,
+    val operatorName: String
+)
+
+/**
+ * Strictly append-only DAO for employee activity & security audit trail.
+ * Exposes NO @Update or @Delete mutation methods.
+ */
+@Dao
+interface AuditLogDao {
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAuditLog(entry: AuditLogEntity): Long
+
+    @Query(
+        """
+        SELECT * FROM audit_logs
+        WHERE timestamp BETWEEN :startDate AND :endDate
+        AND (:operatorFilter = '' OR (:operatorFilter = '__SYSTEM__' AND operator_id IN ('SYSTEM', 'LEGACY', 'UNAUTHENTICATED')) OR operator_id = :operatorFilter)
+        AND (
+            :categoryFilter = ''
+            OR (:categoryFilter = 'AUTH' AND (entity_type = 'OPERATOR' OR action_type LIKE 'AUTH_%'))
+            OR (:categoryFilter = 'EXCHANGE' AND entity_type = 'DATA_EXCHANGE')
+            OR (:categoryFilter = 'COMPANY' AND entity_type = 'COMPANY_HEADER')
+            OR (:categoryFilter = 'SETTINGS' AND entity_type = 'APP_SETTINGS')
+            OR entity_type = :categoryFilter
+        )
+        AND (
+            :query = ''
+            OR operator_name LIKE '%' || :query || '%'
+            OR operator_id LIKE '%' || :query || '%'
+            OR entity_id LIKE '%' || :query || '%'
+            OR summary_en LIKE '%' || :query || '%'
+            OR summary_bn LIKE '%' || :query || '%'
+            OR action_type LIKE '%' || :query || '%'
+        )
+        ORDER BY timestamp DESC, id DESC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    fun getAuditLogsPagedFlow(
+        operatorFilter: String,
+        categoryFilter: String,
+        query: String,
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        offset: Int
+    ): Flow<List<AuditLogEntity>>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM audit_logs
+        WHERE timestamp BETWEEN :startDate AND :endDate
+        AND (:operatorFilter = '' OR (:operatorFilter = '__SYSTEM__' AND operator_id IN ('SYSTEM', 'LEGACY', 'UNAUTHENTICATED')) OR operator_id = :operatorFilter)
+        AND (
+            :categoryFilter = ''
+            OR (:categoryFilter = 'AUTH' AND (entity_type = 'OPERATOR' OR action_type LIKE 'AUTH_%'))
+            OR (:categoryFilter = 'EXCHANGE' AND entity_type = 'DATA_EXCHANGE')
+            OR (:categoryFilter = 'COMPANY' AND entity_type = 'COMPANY_HEADER')
+            OR (:categoryFilter = 'SETTINGS' AND entity_type = 'APP_SETTINGS')
+            OR entity_type = :categoryFilter
+        )
+        AND (
+            :query = ''
+            OR operator_name LIKE '%' || :query || '%'
+            OR operator_id LIKE '%' || :query || '%'
+            OR entity_id LIKE '%' || :query || '%'
+            OR summary_en LIKE '%' || :query || '%'
+            OR summary_bn LIKE '%' || :query || '%'
+            OR action_type LIKE '%' || :query || '%'
+        )
+        """
+    )
+    fun getAuditLogsCountFlow(
+        operatorFilter: String,
+        categoryFilter: String,
+        query: String,
+        startDate: Long,
+        endDate: Long
+    ): Flow<Int>
+
+    @Query("SELECT * FROM audit_logs WHERE entity_type = :entityType AND entity_id = :entityId ORDER BY timestamp DESC, id DESC")
+    fun getAuditLogsForEntityFlow(entityType: String, entityId: String): Flow<List<AuditLogEntity>>
+
+    @Query("SELECT * FROM audit_logs WHERE entity_type = :entityType AND entity_id = :entityId ORDER BY timestamp DESC, id DESC")
+    suspend fun getAuditLogsForEntity(entityType: String, entityId: String): List<AuditLogEntity>
+
+    @Query("SELECT COUNT(*) FROM audit_logs")
+    fun getTotalAuditLogCountFlow(): Flow<Int>
+
+    @Query("SELECT DISTINCT operator_id AS operatorId, operator_name AS operatorName FROM audit_logs WHERE operator_id != 'SYSTEM' ORDER BY operator_name ASC")
+    fun getDistinctAuditOperatorsFlow(): Flow<List<AuditOperatorOption>>
+
+    @Query("SELECT * FROM audit_logs ORDER BY timestamp DESC, id DESC")
+    suspend fun getAllAuditLogsDirect(): List<AuditLogEntity>
 }
 

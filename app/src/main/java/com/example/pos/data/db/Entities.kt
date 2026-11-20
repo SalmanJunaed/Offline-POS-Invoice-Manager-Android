@@ -20,7 +20,9 @@ data class CompanyHeaderEntity(
     @ColumnInfo(name = "phone_number") val phoneNumber: String,
     @ColumnInfo(name = "logo_uri") val logoUri: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "updated_by_operator_id") val updatedByOperatorId: String? = null,
+    @ColumnInfo(name = "updated_by_operator_name") val updatedByOperatorName: String? = null
 )
 
 @Entity(
@@ -39,6 +41,9 @@ data class OperatorEntity(
     @ColumnInfo(name = "password_hash") val passwordHash: String,
     @ColumnInfo(name = "is_active") val isActive: Boolean = false,
     @ColumnInfo(name = "remember_me") val rememberMe: Boolean = false,
+    @ColumnInfo(name = "recovery_code_hash", defaultValue = "") val recoveryCodeHash: String = "",
+    @ColumnInfo(name = "failed_attempts", defaultValue = "0") val failedAttempts: Int = 0,
+    @ColumnInfo(name = "locked_until_millis", defaultValue = "0") val lockedUntilMillis: Long = 0L,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )
@@ -66,7 +71,11 @@ data class ProductEntity(
     @ColumnInfo(name = "sort_order") val sortOrder: Int = 0,
     @ColumnInfo(name = "is_active") val isActive: Boolean = true,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "created_by_operator_id") val createdByOperatorId: String? = null,
+    @ColumnInfo(name = "created_by_operator_name") val createdByOperatorName: String? = null,
+    @ColumnInfo(name = "updated_by_operator_id") val updatedByOperatorId: String? = null,
+    @ColumnInfo(name = "updated_by_operator_name") val updatedByOperatorName: String? = null
 ) {
     /**
      * Returns the localized display name according to the active language ("bn" or "en").
@@ -125,7 +134,9 @@ data class InvoiceEntity(
     @ColumnInfo(name = "paid_amount_bdt", defaultValue = "0") val paidAmountBdt: Long = 0L,
     @ColumnInfo(name = "footer_note") val footerNote: String = "",
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "updated_by_operator_id") val updatedByOperatorId: String? = null,
+    @ColumnInfo(name = "updated_by_operator_name") val updatedByOperatorName: String? = null
 )
 
 /**
@@ -176,7 +187,9 @@ data class AppSettingsEntity(
     @ColumnInfo(name = "footer_note_line2") val footerNoteLine2: String = "ধন্যবাদ আবার আসবেন",
     @ColumnInfo(name = "next_order_sequence") val nextOrderSequence: Long = 10294L,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "updated_by_operator_id") val updatedByOperatorId: String? = null,
+    @ColumnInfo(name = "updated_by_operator_name") val updatedByOperatorName: String? = null
 )
 
 @Entity(
@@ -184,7 +197,8 @@ data class AppSettingsEntity(
     indices = [
         Index(value = ["order_id"]),
         Index(value = ["payment_method"]),
-        Index(value = ["timestamp"])
+        Index(value = ["timestamp"]),
+        Index(value = ["collected_by_operator_id"])
     ],
     foreignKeys = [
         androidx.room.ForeignKey(
@@ -202,7 +216,9 @@ data class PaymentRecordEntity(
     @ColumnInfo(name = "amount_paid_paisa") val amountPaidPaisa: Long,
     @ColumnInfo(name = "transaction_ref") val transactionRef: String? = null,
     @ColumnInfo(name = "timestamp") val timestamp: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "collected_by_operator_id") val collectedByOperatorId: String? = null,
+    @ColumnInfo(name = "collected_by_operator_name") val collectedByOperatorName: String? = null
 )
 
 data class SalesSummaryDto(
@@ -237,5 +253,42 @@ data class CustomerEntity(
     @ColumnInfo(name = "total_orders") val totalOrders: Int = 0, // Order count summary
     @ColumnInfo(name = "total_spent_paisa") val totalSpentPaisa: Long = 0L, // Historical spent paisa
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "created_by_operator_id") val createdByOperatorId: String? = null,
+    @ColumnInfo(name = "created_by_operator_name") val createdByOperatorName: String? = null,
+    @ColumnInfo(name = "updated_by_operator_id") val updatedByOperatorId: String? = null,
+    @ColumnInfo(name = "updated_by_operator_name") val updatedByOperatorName: String? = null
+)
+
+/**
+ * Append-only Employee Activity & Audit Log entry.
+ * Intentionally has NO foreign key constraint to operators so historical audit attribution
+ * remains intact even if an operator record changes or historical/system events are logged.
+ */
+@Entity(
+    tableName = "audit_logs",
+    indices = [
+        Index(value = ["event_id"], unique = true),
+        Index(value = ["timestamp"]),
+        Index(value = ["operator_id", "timestamp"]),
+        Index(value = ["action_type", "timestamp"]),
+        Index(value = ["entity_type", "entity_id"]),
+        Index(value = ["is_success", "timestamp"])
+    ]
+)
+data class AuditLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    @ColumnInfo(name = "event_id") val eventId: String,
+    @ColumnInfo(name = "timestamp") val timestamp: Long,
+    @ColumnInfo(name = "operator_id") val operatorId: String,
+    @ColumnInfo(name = "operator_name") val operatorName: String,
+    @ColumnInfo(name = "action_type") val actionType: String,
+    @ColumnInfo(name = "entity_type") val entityType: String,
+    @ColumnInfo(name = "entity_id") val entityId: String,
+    @ColumnInfo(name = "summary_en") val summaryEn: String,
+    @ColumnInfo(name = "summary_bn") val summaryBn: String,
+    @ColumnInfo(name = "before_data") val beforeData: String? = null,
+    @ColumnInfo(name = "after_data") val afterData: String? = null,
+    @ColumnInfo(name = "is_success") val isSuccess: Boolean = true,
+    @ColumnInfo(name = "metadata_json") val metadataJson: String? = null
 )

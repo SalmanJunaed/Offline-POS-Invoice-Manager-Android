@@ -1,486 +1,179 @@
 package com.example.pos.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocalGasStation
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.pos.data.Localization
 import com.example.pos.ui.viewmodel.PosViewModel
+import kotlinx.coroutines.delay
 
 @Composable
 fun AuthScreen(
     viewModel: PosViewModel,
     language: String,
+    allowRegistrationWhenOperatorsExist: Boolean = false,
     onLoginSuccess: () -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Login, 1: Register, 2: Forgot/Reset
+    val hasRegisteredOperators by viewModel.hasRegisteredOperators.collectAsState()
+    val companyHeader by viewModel.companyHeader.collectAsState()
+    val isRegistering by viewModel.isRegistering.collectAsState()
+    val pendingRecoveryCode by viewModel.pendingRecoveryCode.collectAsState()
+    val pendingRecoveryOperatorName by viewModel.pendingRecoveryOperatorName.collectAsState()
 
-    val tabs = listOf(
-        Localization.get(Localization.Key.BTN_LOGIN, language),
-        Localization.get(Localization.Key.TAB_REGISTER, language),
-        Localization.get(Localization.Key.TAB_RESET, language)
+    val isLoggingIn by viewModel.isLoggingIn.collectAsState()
+    val lockoutRemainingSeconds by viewModel.loginLockoutSeconds.collectAsState()
+    val rememberedPhone by viewModel.rememberedPhoneHint.collectAsState()
+    val rememberMeSaved by viewModel.rememberMeHintEnabled.collectAsState()
+    val isVerifyingRecovery by viewModel.isVerifyingRecovery.collectAsState()
+    val isResettingPassword by viewModel.isResettingPassword.collectAsState()
+    val loginBannerMessage by viewModel.loginBannerMessage.collectAsState()
+
+    var registrationError by remember { mutableStateOf<String?>(null) }
+    var loginError by remember { mutableStateOf<String?>(null) }
+    var isRecoveryMode by remember { mutableStateOf(false) }
+    var recoveryInitialPhone by remember { mutableStateOf("") }
+    var trackedLoginPhone by remember(rememberedPhone) { mutableStateOf(rememberedPhone) }
+
+    var showAuthorizedRegistration by remember(allowRegistrationWhenOperatorsExist) {
+        mutableStateOf(allowRegistrationWhenOperatorsExist)
+    }
+    var isCreateAccountMode by remember { mutableStateOf(false) }
+
+    // 1. One-time recovery confirmation after registration (Step 07C)
+    val recoveryCode = pendingRecoveryCode
+    if (!recoveryCode.isNullOrBlank()) {
+        RecoveryCodeConfirmationScreen(
+            language = language,
+            recoveryCode = recoveryCode,
+            operatorName = pendingRecoveryOperatorName,
+            onContinueToPos = {
+                viewModel.acknowledgeRecoveryCode()
+                onLoginSuccess()
+            }
+        )
+        return
+    }
+
+    // 2. First-install Registration, Login "Create New Account" link, or explicitly authorized operator creation
+    val shouldShowRegistration = !hasRegisteredOperators ||
+        (allowRegistrationWhenOperatorsExist && showAuthorizedRegistration) ||
+        isCreateAccountMode
+
+    if (shouldShowRegistration) {
+        RegistrationOnboardingView(
+            language = language,
+            logoUri = companyHeader?.logoUri,
+            isSubmitting = isRegistering,
+            serverErrorMessage = registrationError,
+            showBackToLogin = hasRegisteredOperators,
+            onBackToLogin = {
+                showAuthorizedRegistration = false
+                isCreateAccountMode = false
+                registrationError = null
+            },
+            onClearServerError = { registrationError = null },
+            onSubmitRegistration = { name, normalizedPhone, address, password ->
+                viewModel.registerWithRecovery(name, normalizedPhone, address, password) { success, _, err ->
+                    if (success) {
+                        isCreateAccountMode = false
+                    } else {
+                        registrationError = err
+                    }
+                }
+            }
+        )
+        return
+    }
+
+    // 3. Offline Password Recovery Flow (Step 07D)
+    if (isRecoveryMode) {
+        PasswordRecoveryScreen(
+            language = language,
+            logoUri = companyHeader?.logoUri,
+            initialPhone = recoveryInitialPhone.ifBlank { trackedLoginPhone },
+            isVerifying = isVerifyingRecovery,
+            isResetting = isResettingPassword,
+            onVerifyRecoveryCode = { normalizedPhone, code, onResult ->
+                viewModel.verifyRecoveryCode(normalizedPhone, code, onResult)
+            },
+            onResetPassword = { normalizedPhone, code, newPassword, onResult ->
+                viewModel.resetPassword(normalizedPhone, code, newPassword, onResult)
+            },
+            onRecoveryResetCompleted = {
+                isRecoveryMode = false
+                loginError = null
+                if (trackedLoginPhone.isNotBlank()) {
+                    viewModel.refreshLockoutStatus(trackedLoginPhone)
+                }
+            },
+            onBackToLogin = {
+                isRecoveryMode = false
+            }
+        )
+        return
+    }
+
+    // 4. Authoritative Lockout Sync & Countdown Ticker while Login Screen is active
+    LaunchedEffect(Unit) {
+        if (trackedLoginPhone.isNotBlank()) {
+            viewModel.refreshLockoutStatus(trackedLoginPhone)
+        }
+    }
+
+    val isLocked = lockoutRemainingSeconds > 0L
+    LaunchedEffect(isLocked, trackedLoginPhone) {
+        if (isLocked) {
+            while (viewModel.loginLockoutSeconds.value > 0L) {
+                delay(1000L)
+                viewModel.tickOrRefreshLockout(trackedLoginPhone)
+            }
+        }
+    }
+
+    // 5. Modern Login Screen (Step 07D)
+    LoginOnboardingView(
+        language = language,
+        logoUri = companyHeader?.logoUri,
+        initialPhone = rememberedPhone.ifBlank { viewModel.getRememberedPhone() },
+        initialRememberMe = rememberMeSaved || viewModel.isRememberMeSaved(),
+        isSubmitting = isLoggingIn,
+        lockoutRemainingSeconds = lockoutRemainingSeconds,
+        authErrorMessage = loginError,
+        successBannerMessage = loginBannerMessage,
+        onPhoneChanged = { newPhone ->
+            trackedLoginPhone = newPhone
+            viewModel.refreshLockoutStatus(newPhone)
+        },
+        onClearMessages = {
+            loginError = null
+            viewModel.clearLoginBanner()
+        },
+        onForgotPasswordClick = { currentPhone ->
+            loginError = null
+            viewModel.clearLoginBanner()
+            recoveryInitialPhone = currentPhone
+            isRecoveryMode = true
+        },
+        onCreateNewAccountClick = {
+            loginError = null
+            registrationError = null
+            viewModel.clearLoginBanner()
+            isCreateAccountMode = true
+        },
+        onSubmitLogin = { normalizedPhone, password, rememberMe ->
+            trackedLoginPhone = normalizedPhone
+            viewModel.login(normalizedPhone, password, rememberMe) { success, err ->
+                if (success) {
+                    loginError = null
+                    onLoginSuccess()
+                } else {
+                    loginError = err ?: Localization.get(Localization.Key.LOGIN_ERR_GENERIC, language)
+                }
+            }
+        }
     )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .testTag("auth_screen"),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Station Branding Canonical Logo
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                com.example.pos.ui.components.CompanyLogoView(
-                    logoUri = null,
-                    modifier = Modifier.fillMaxSize(),
-                    fallback = {
-                        Icon(
-                            imageVector = Icons.Default.LocalGasStation,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = Localization.get(Localization.Key.APP_TITLE, language),
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Text(
-                text = Localization.get(Localization.Key.TAGLINE_OFFLINE, language),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    TabRow(selectedTabIndex = selectedTab) {
-                        tabs.forEachIndexed { index, title ->
-                            Tab(
-                                selected = selectedTab == index,
-                                onClick = { selectedTab = index },
-                                text = {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal),
-                                        maxLines = 1
-                                    )
-                                }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    when (selectedTab) {
-                        0 -> LoginForm(
-                            viewModel = viewModel,
-                            language = language,
-                            onLoginSuccess = onLoginSuccess
-                        )
-                        1 -> RegisterForm(
-                            viewModel = viewModel,
-                            language = language,
-                            onSuccess = { selectedTab = 0 }
-                        )
-                        2 -> ResetPasswordForm(
-                            viewModel = viewModel,
-                            language = language,
-                            onSuccess = { selectedTab = 0 }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Security,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = Localization.get(Localization.Key.SECURITY_NOTICE, language),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun LoginForm(
-    viewModel: PosViewModel,
-    language: String,
-    onLoginSuccess: () -> Unit
-) {
-    val initialPhone = remember {
-        val saved = viewModel.getRememberedPhone()
-        if (saved.isNotBlank()) saved else "01700000000"
-    }
-    val initialRemember = remember { viewModel.isRememberMeSaved() }
-
-    var phone by remember { mutableStateOf(initialPhone) }
-    var password by remember { mutableStateOf("1234") }
-    var rememberMe by remember { mutableStateOf(initialRemember) }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it; errorMessage = null },
-            label = { Text(Localization.get(Localization.Key.USERNAME_OR_PHONE, language), fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("login_phone_input"),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it; errorMessage = null },
-            label = { Text(Localization.get(Localization.Key.PASSWORD, language), fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-            trailingIcon = {
-                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Icon(
-                        imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                        contentDescription = "Toggle password"
-                    )
-                }
-            },
-            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("login_password_input"),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it })
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = Localization.get(Localization.Key.REMEMBER_ME, language),
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        if (errorMessage != null) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = errorMessage!!,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Button(
-            onClick = {
-                viewModel.login(phone, password, rememberMe) { success, err ->
-                    if (success) {
-                        onLoginSuccess()
-                    } else {
-                        errorMessage = err
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .testTag("submit_login_btn"),
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-        ) {
-            Text(
-                text = Localization.get(Localization.Key.BTN_LOGIN, language),
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-            )
-        }
-    }
-}
-
-@Composable
-fun RegisterForm(
-    viewModel: PosViewModel,
-    language: String,
-    onSuccess: () -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text(Localization.get(Localization.Key.FULL_NAME, language), fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it },
-            label = { Text(Localization.get(Localization.Key.PHONE_NUMBER, language), fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = address,
-            onValueChange = { address = it },
-            label = { Text(Localization.get(Localization.Key.ADDRESS, language), fontSize = 12.sp) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text(Localization.get(Localization.Key.PASSWORD, language), fontSize = 12.sp) },
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = confirmPassword,
-            onValueChange = { confirmPassword = it },
-            label = { Text(Localization.get(Localization.Key.CONFIRM_PASSWORD, language), fontSize = 12.sp) },
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-        )
-
-        if (errorMessage != null) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = errorMessage!!,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Button(
-            onClick = {
-                if (password != confirmPassword) {
-                    errorMessage = "Passwords do not match"
-                    return@Button
-                }
-                viewModel.register(name, phone, address, password) { success, err ->
-                    if (success) {
-                        onSuccess()
-                    } else {
-                        errorMessage = err
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Text(Localization.get(Localization.Key.BTN_REGISTER, language))
-        }
-    }
-}
-
-@Composable
-fun ResetPasswordForm(
-    viewModel: PosViewModel,
-    language: String,
-    onSuccess: () -> Unit
-) {
-    var phone by remember { mutableStateOf("") }
-    var newPassword by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it },
-            label = { Text(Localization.get(Localization.Key.PHONE_NUMBER, language), fontSize = 12.sp) },
-            leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = newPassword,
-            onValueChange = { newPassword = it },
-            label = { Text(Localization.get(Localization.Key.PASSWORD, language), fontSize = 12.sp) },
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = confirmPassword,
-            onValueChange = { confirmPassword = it },
-            label = { Text(Localization.get(Localization.Key.CONFIRM_PASSWORD, language), fontSize = 12.sp) },
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-        )
-
-        if (errorMessage != null) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = errorMessage!!,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Button(
-            onClick = {
-                if (newPassword != confirmPassword) {
-                    errorMessage = "Passwords do not match"
-                    return@Button
-                }
-                viewModel.resetPassword(phone, newPassword) { success, err ->
-                    if (success) {
-                        onSuccess()
-                    } else {
-                        errorMessage = err
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Text(Localization.get(Localization.Key.BTN_RESET_PASSWORD, language))
-        }
-    }
 }

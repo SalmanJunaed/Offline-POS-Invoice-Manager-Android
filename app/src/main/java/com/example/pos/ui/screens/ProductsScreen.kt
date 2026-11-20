@@ -45,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,7 +74,8 @@ import com.example.pos.ui.viewmodel.PosViewModel
 @Composable
 fun ProductsScreen(
     viewModel: PosViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onRequestLogout: (() -> Unit)? = null
 ) {
     val language by viewModel.language.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
@@ -138,7 +140,8 @@ fun ProductsScreen(
                 },
                 onToggleTheme = {
                     viewModel.setThemeMode(if (themeMode == "DARK") "LIGHT" else "DARK")
-                }
+                },
+                onLogoutClick = onRequestLogout
             )
 
             LazyColumn(
@@ -704,6 +707,39 @@ fun ProductEditDialog(
                         shape = RoundedCornerShape(8.dp),
                         singleLine = true
                     )
+
+                    if (existing != null) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("product_attribution_card")
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                val createdByDisplay = existing.createdByOperatorName?.takeIf { it.isNotBlank() }
+                                    ?.let { "$it (${existing.createdByOperatorId ?: ""})" }
+                                    ?: Localization.get(Localization.Key.ACTIVITY_LEGACY_ATTRIBUTION, language)
+                                val updatedByDisplay = existing.updatedByOperatorName?.takeIf { it.isNotBlank() }
+                                    ?.let { "$it (${existing.updatedByOperatorId ?: ""})" }
+                                    ?: Localization.get(Localization.Key.ACTIVITY_LEGACY_ATTRIBUTION, language)
+
+                                Text(
+                                    text = "${Localization.get(Localization.Key.CREATED_BY_LABEL, language)}: $createdByDisplay",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.testTag("product_created_by")
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${Localization.get(Localization.Key.LAST_MODIFIED_BY_LABEL, language)}: $updatedByDisplay",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.testTag("product_updated_by")
+                                )
+                            }
+                        }
+                    }
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))

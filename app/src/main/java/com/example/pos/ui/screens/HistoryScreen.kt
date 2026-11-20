@@ -116,6 +116,7 @@ import com.example.pos.data.Localization
 import com.example.pos.data.db.InvoiceEntity
 import com.example.pos.data.db.InvoiceLineEntity
 import com.example.pos.data.db.ItemSalesSummary
+import com.example.pos.data.db.PaymentRecordEntity
 import com.example.pos.data.repository.HistorySortOption
 import com.example.pos.domain.FinancialCalculationEngine
 import com.example.pos.core.util.CompanyLogoManager
@@ -156,7 +157,8 @@ fun formatHistoryDateTimeBn(timeMillis: Long): String {
 fun HistoryScreen(
     viewModel: PosViewModel,
     modifier: Modifier = Modifier,
-    onOpenNewInvoice: () -> Unit = {}
+    onOpenNewInvoice: () -> Unit = {},
+    onRequestLogout: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val language by viewModel.language.collectAsState()
@@ -259,7 +261,8 @@ fun HistoryScreen(
             },
             onToggleTheme = {
                 viewModel.setThemeMode(if (themeMode == "DARK") "LIGHT" else "DARK")
-            }
+            },
+            onLogoutClick = onRequestLogout
         )
 
         // Primary Navigation Tabs (Transactions vs Graphs & Analytics)
@@ -1117,9 +1120,13 @@ fun HistoryScreen(
     if (detailsInvoice != null) {
         val target = detailsInvoice
         val cachedLines = orderLinesCache[target.orderId] ?: (if (expandedOrderId == target.orderId) expandedLines else emptyList())
+        val detailsPayments by remember(target.orderId) {
+            viewModel.getPaymentsForOrder(target.orderId)
+        }.collectAsState(initial = emptyList())
         InvoiceDetailsDialog(
             invoice = target,
             lines = cachedLines,
+            payments = detailsPayments,
             language = language,
             onDismiss = { selectedInvoiceForDetails = null },
             onPreviewPrint = {
@@ -2029,6 +2036,7 @@ fun EditInvoiceDialog(
 fun InvoiceDetailsDialog(
     invoice: InvoiceEntity,
     lines: List<InvoiceLineEntity>,
+    payments: List<PaymentRecordEntity> = emptyList(),
     language: String,
     onDismiss: () -> Unit,
     onPreviewPrint: () -> Unit,
@@ -2109,6 +2117,45 @@ fun InvoiceDetailsDialog(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Operator Accountability Attribution (Creator + Last Modifier)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("details_attribution_card")
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        val creatorDisplay = if (invoice.operatorName.isNotBlank()) {
+                            "${invoice.operatorName} (${invoice.operatorId})"
+                        } else {
+                            Localization.get(Localization.Key.ACTIVITY_LEGACY_ATTRIBUTION, language)
+                        }
+                        Text(
+                            text = "${Localization.get(Localization.Key.CREATED_BY_LABEL, language)}: $creatorDisplay",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.testTag("details_created_by")
+                        )
+
+                        val modifierDisplay = if (!invoice.updatedByOperatorId.isNullOrBlank()) {
+                            val namePart = invoice.updatedByOperatorName?.takeIf { it.isNotBlank() } ?: invoice.updatedByOperatorId
+                            "$namePart (${invoice.updatedByOperatorId}) • ${formatHistoryDateTimeBn(invoice.updatedAt)}"
+                        } else {
+                            Localization.get(Localization.Key.ACTIVITY_LEGACY_ATTRIBUTION, language)
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${Localization.get(Localization.Key.LAST_MODIFIED_BY_LABEL, language)}: $modifierDisplay",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("details_updated_by")
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2267,6 +2314,73 @@ fun InvoiceDetailsDialog(
                             color = if (dueAmountBdt > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                         )
                     )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Payment Collection History (shows collector attribution for initial + due settlement payments)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("details_payment_history")
+                ) {
+                    Text(
+                        text = Localization.get(Localization.Key.PAYMENT_COLLECTION_HISTORY, language),
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (payments.isEmpty()) {
+                        Text(
+                            text = Localization.get(Localization.Key.NO_PAYMENT_RECORDS, language),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        payments.forEach { p ->
+                            val collectorText = if (!p.collectedByOperatorName.isNullOrBlank()) {
+                                "${p.collectedByOperatorName} (${p.collectedByOperatorId ?: ""})".trim()
+                            } else if (!p.collectedByOperatorId.isNullOrBlank()) {
+                                p.collectedByOperatorId
+                            } else {
+                                Localization.get(Localization.Key.ACTIVITY_LEGACY_ATTRIBUTION, language)
+                            }
+                            val amountDisplay = DateTimeUtils.toBengaliNumerals(
+                                FinancialCalculationEngine.formatPaisaToBdt(p.amountPaidPaisa)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "${p.paymentMethod} • $amountDisplay ৳",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                                        )
+                                        Text(
+                                            text = formatHistoryDateTimeBn(p.timestamp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(
+                                        text = "${Localization.get(Localization.Key.COLLECTED_BY_LABEL, language)}: $collectorText",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))

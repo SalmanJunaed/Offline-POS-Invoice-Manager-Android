@@ -1,5 +1,6 @@
 package com.example.pos.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -14,11 +15,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -38,12 +45,14 @@ import coil.request.ImageRequest
 import com.example.R
 import com.example.pos.core.util.CompanyLogoManager
 import com.example.pos.core.util.DateTimeUtils
+import com.example.pos.data.Localization
 import com.example.pos.data.db.CompanyHeaderEntity
 import com.example.pos.data.db.OperatorEntity
 import com.example.ui.theme.PosBorderGreen
 import com.example.ui.theme.PosCharcoalText
 import com.example.ui.theme.PosCleanWhite
 import com.example.ui.theme.PosDeepGreen
+import com.example.ui.theme.PosDueRed
 import com.example.ui.theme.PosEmerald
 import com.example.ui.theme.PosFreshGreen
 import com.example.ui.theme.PosLightGreen
@@ -110,8 +119,7 @@ fun CompanyLogoView(
 }
 
 /**
- * Top Station Header (White-Green Theme, Bengali-Only, Centered Company Name & Logo).
- * Language and Theme toggle controls removed as per Stage 05.
+ * Top Station Header (White-Green Theme, Centered Company Name & Logo, optional Global Logout action).
  */
 @Composable
 fun TopStationHeader(
@@ -121,7 +129,8 @@ fun TopStationHeader(
     currentTheme: String = "LIGHT",
     onToggleLanguage: () -> Unit = {},
     onToggleTheme: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLogoutClick: (() -> Unit)? = null
 ) {
     var currentTimeString by remember {
         mutableStateOf(DateTimeUtils.formatLiveTime())
@@ -149,64 +158,81 @@ fun TopStationHeader(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Centered Company Header with Logo & 3-Line Name
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CompanyLogoView(
-                    logoUri = company?.logoUri,
-                    modifier = Modifier.size(48.dp)
-                )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
+            // Centered Company Header with Logo & 3-Line Name (+ optional top-right Logout IconButton)
+            if (onLogoutClick != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    val defaultLine1 = "মেসার্স রাকিব ফিলিং স্টেশন"
-                    val defaultLine2 = "এন্ড"
-                    val defaultLine3 = "এল পি জি অটোগ্যাস ফিলিং স্টেশন"
+                    // Symmetric start slot matching the 48.dp Logout button keeps title genuinely centered
+                    Spacer(modifier = Modifier.width(48.dp))
 
-                    val companyName = company?.companyName
-                    val (line1, line2, line3) = if (!companyName.isNullOrBlank()) {
-                        val lines = companyName.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                        when {
-                            lines.size >= 3 -> Triple(lines[0], lines[1], lines.drop(2).joinToString(" "))
-                            lines.size == 2 -> Triple(lines[0], "", lines[1])
-                            else -> Triple(lines[0], "", "")
-                        }
-                    } else {
-                        Triple(defaultLine1, defaultLine2, defaultLine3)
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .align(Alignment.CenterVertically),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CompanyLogoView(
+                            logoUri = company?.logoUri,
+                            modifier = Modifier.size(48.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        StationTitleColumn(
+                            company = company,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
                     }
 
-                    Text(
-                        text = line1,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = PosDeepGreen,
-                        textAlign = TextAlign.Center
+                    Box(
+                        modifier = Modifier.size(48.dp),
+                        contentAlignment = Alignment.TopEnd
+                    ) {
+                        IconButton(
+                            onClick = onLogoutClick,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .minimumInteractiveComponentSize()
+                                .testTag("btn_global_logout")
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = PosDueRed.copy(alpha = 0.08f),
+                                border = BorderStroke(1.dp, PosDueRed.copy(alpha = 0.22f)),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                                        contentDescription = Localization.get(Localization.Key.LOGOUT, currentLanguage),
+                                        tint = PosDueRed,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CompanyLogoView(
+                        logoUri = company?.logoUri,
+                        modifier = Modifier.size(48.dp)
                     )
 
-                    if (line2.isNotEmpty()) {
-                        Text(
-                            text = line2,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = PosMutedText,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                    Spacer(modifier = Modifier.width(12.dp))
 
-                    if (line3.isNotEmpty()) {
-                        Text(
-                            text = line3,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium,
-                            color = PosCharcoalText,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                    StationTitleColumn(
+                        company = company,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
                 }
             }
 
@@ -258,6 +284,60 @@ fun TopStationHeader(
                     fontWeight = FontWeight.Medium
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun StationTitleColumn(
+    company: CompanyHeaderEntity?,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        val defaultLine1 = "মেসার্স রাকিব ফিলিং স্টেশন"
+        val defaultLine2 = "এন্ড"
+        val defaultLine3 = "এল পি জি অটোগ্যাস ফিলিং স্টেশন"
+
+        val companyName = company?.companyName
+        val (line1, line2, line3) = if (!companyName.isNullOrBlank()) {
+            val lines = companyName.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            when {
+                lines.size >= 3 -> Triple(lines[0], lines[1], lines.drop(2).joinToString(" "))
+                lines.size == 2 -> Triple(lines[0], "", lines[1])
+                else -> Triple(lines[0], "", "")
+            }
+        } else {
+            Triple(defaultLine1, defaultLine2, defaultLine3)
+        }
+
+        Text(
+            text = line1,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = PosDeepGreen,
+            textAlign = TextAlign.Center
+        )
+
+        if (line2.isNotEmpty()) {
+            Text(
+                text = line2,
+                style = MaterialTheme.typography.labelSmall,
+                color = PosMutedText,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (line3.isNotEmpty()) {
+            Text(
+                text = line3,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = PosCharcoalText,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
